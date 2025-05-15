@@ -9,6 +9,7 @@ export type $MigrationFieldOperation = {
         type: string
         nullable?: boolean
         pk?: boolean
+        default?: string
     }
 } | {
     rename: {
@@ -213,7 +214,7 @@ export class $Migration {
 
         const filepath = path.join(filedir, this.name+'.ts');
         let str = '';
-        str += 'import { migration } from \'nesoi/lib/adapters/postgres/src/migrator\';\n';
+        str += 'import { migration } from \'@nesoi/postgres/migrator\';\n';
         str += '\n';
         str += '/**\n';
         str += ` * $migration[${this.name}]\n`;

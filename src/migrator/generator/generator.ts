@@ -250,6 +250,7 @@ export class MigrationGenerator<
             'boolean': () => 'bool',
             'date': () => 'date',
             'datetime': () => 'timestamp',
+            'duration': () => 'interval',
             'decimal': () => 'numeric',
             'dict': () => 'jsonb',
             'enum': () => 'bpchar', // TODO: read from schema maxLength
@@ -346,6 +347,12 @@ export class MigrationGenerator<
 
                 stepFields[selected.i].selected = true;
                 schema = stepFields[selected.i].schema;
+            }
+
+            if (type === 'alter' && 'create' in schema.operation && schema.operation.create.nullable) {
+                header();
+                const defaul = await UI.question(`Column '${schema.column}' is NOT NULL and is being added to an already existing table. What should be the default value for old rows?\n`);
+                schema.operation.create.default = defaul;
             }
 
             if ('drop' in schema.operation && !schema.operation.drop.nullable) {
