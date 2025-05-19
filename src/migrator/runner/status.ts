@@ -6,6 +6,7 @@ export class MigrationRunnerStatus {
     public items: {
         state: 'done' | 'pending' | 'lost' | 'modified'
         id?: number,
+        service: string,
         module: string,
         name: string,
         description?: string,
@@ -42,6 +43,7 @@ export class MigrationRunnerStatus {
             else {
                 this.items.push({
                     id: undefined,
+                    service: migration.service,
                     module: migration.module,
                     name: migration.name,
                     description: migration.routine.description,

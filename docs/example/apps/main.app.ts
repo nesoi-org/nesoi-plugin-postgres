@@ -1,11 +1,6 @@
-import { MemoryBucketAdapter } from 'nesoi/lib/elements';
-
 import Nesoi from '../nesoi';
 import { MonolythApp } from 'nesoi/lib/engine/apps/monolyth/monolyth.app';
-import { PostgresBucketAdapter } from 'nesoi/lib/adapters/postgres/src/postgres.bucket_adapter';
-import { PostgresService } from 'nesoi/lib/adapters/postgres/src/postgres.service';
-import { PostgresCLI } from 'nesoi/lib/adapters/postgres/src/postgres.cli';
-import { PostgresConfig } from 'nesoi/lib/adapters/postgres/src/postgres.config';
+import { PostgresBucketAdapter, PostgresCLI, PostgresConfig, PostgresService } from '../../../src';
 
 const PostgresConfig: PostgresConfig = {
     meta: {
@@ -42,7 +37,9 @@ export default new MonolythApp('main', Nesoi)
     })
 
     .config.trash({
-        adapter: $ => new MemoryBucketAdapter($)
+        example: {
+            adapter: ($, { pg }) => new PostgresBucketAdapter($, pg, '__trash__')
+        }
     })
 
     .config.cli({

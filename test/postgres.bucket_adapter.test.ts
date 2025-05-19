@@ -85,11 +85,11 @@ async function setup() {
 
     await Database.createDatabase('NESOI_TEST', PostgresConfig.connection, { if_exists: 'delete' });
 
-    const migrator = await MigrationProvider.create(daemon, pg.sql);
+    const migrator = await MigrationProvider.create(daemon, pg);
     const migration = await migrator.generateForBucket('MODULE', 'BUCKET', 'nesoi_test_table');
     if (migration) {
         migration.name = 'postgres.bucket_adapter.test';
-        await MigrationRunner.fromSchema.up(daemon, pg.sql, migration);
+        await MigrationRunner.fromSchema.up(daemon, pg, migration);
     }
         
     return daemon;

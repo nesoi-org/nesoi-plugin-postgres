@@ -149,6 +149,7 @@ export class $Migration {
     public name;
     
     constructor(
+        public service: string,
         public module: string,
         private type: 'create'|'alter'|'custom',
         private tableName: string,
@@ -217,6 +218,7 @@ export class $Migration {
         str += 'import { migration } from \'@nesoi/postgres/migrator\';\n';
         str += '\n';
         str += '/**\n';
+        str += ` * $module[${this.module}]\n`;
         str += ` * $migration[${this.name}]\n`;
         str += ' *\n';
         str += ` * $type[${this.type}]\n`;
@@ -228,6 +230,7 @@ export class $Migration {
         str += ' */\n';
         str += '\n';
         str += 'export default migration({\n';
+        str += `\tservice: '${this.service || ''}',\n`;
         if (this.type !== 'custom')
             str += `\thash: '${this.hash()}',\n`;
         str += `\tdescription: '${this.description || ''}',\n`;
@@ -265,6 +268,7 @@ export class $Migration {
 
     public hash() {
         const hash = createHash('md5');
+        hash.update(`${this.service}.${this.module}.${this.type}.${this.tableName}`);
         const up = this.fnUp().replace(/\s*/g,'');
         hash.update(up);
         const down = this.fnDown().replace(/\s*/g,'');
@@ -272,7 +276,7 @@ export class $Migration {
         return hash.digest('hex');
     }
 
-    public static empty(module: string, name: string) {
-        return new $Migration(module,'custom',name,[]);
+    public static empty(service: string, module: string, name: string) {
+        return new $Migration(service,module,'custom',name,[]);
     }
 }

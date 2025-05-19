@@ -8,6 +8,8 @@ import { colored } from 'nesoi/lib/engine/util/string';
 import { MigrationRunnerStatus } from '../runner/status';
 import { $Migration } from './migration';
 import { MigrationGenerator } from './generator';
+import { PostgresService } from '../../postgres.service';
+import { MigrationRoutine } from '..';
 
 export type MigratorConfig = {
     dirpath?: string
@@ -21,33 +23,34 @@ export class MigrationProvider<
     
     private constructor(
         protected daemon: AnyDaemon,
-        private sql: postgres.Sql<any>,
+        private service: PostgresService,
         public dirpath = './migrations'
     ) {}
 
     static async create(
         daemon: AnyDaemon,
-        sql: postgres.Sql<any>
+        service: PostgresService
     ) {
-        const provider = new MigrationProvider(daemon, sql);
+        const provider = new MigrationProvider(daemon, service);
 
-        const oldTable = await provider.sql`
+        const oldTable = await provider.service.sql`
             SELECT * FROM pg_catalog.pg_tables WHERE tablename = ${ MigrationRunner.MIGRATION_TABLE_NAME };
         `;
 
+        const baseMigrations: [string, MigrationRoutine][] = [
+            ['migrations:v1', (await import('../../migrations/__nesoi_migrations_v1')).default(service.name)]
+        ];
         if (!oldTable.length) {
-            await provider.sql`CREATE TABLE ${provider.sql(MigrationRunner.MIGRATION_TABLE_NAME)} (
-                id SERIAL PRIMARY KEY,
-                module VARCHAR NOT NULL,
-                name VARCHAR NOT NULL,
-                description VARCHAR,
-                batch INT4 NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                hash VARCHAR
-            )`;
+            for (const baseMigration of baseMigrations) {
+                await MigrationRunner.internal.up(daemon, service, '__nesoi_postgres', baseMigration[0], baseMigration[1]);
+            }
         }
 
-        provider.status = await MigrationRunner.status(daemon, provider.sql, provider.dirpath);
+        provider.status = await MigrationRunner.status(daemon, provider.service, provider.dirpath);
+
+        // FUTURE: When migrations:v2, v3, etc is available, here we should
+        // check for the ones which didn't run
+
         return provider;
     }   
 
@@ -55,10 +58,10 @@ export class MigrationProvider<
         const modules = Daemon.getModules(this.daemon);
 
         const migrations: $Migration[] = [];
-        
+
         for (const module of modules) {
             const buckets = Daemon.getModule(this.daemon, module.name).buckets;
-            
+
             for (const bucket in buckets) {
                 const schema: $Bucket = buckets[bucket].schema;
 
@@ -66,8 +69,12 @@ export class MigrationProvider<
                 if (schema.module !== module.name) continue;
                 
                 // Avoid non-postgres buckets
-                const adapter = buckets[bucket].adapter as PostgresBucketAdapter<any, any>;
+                const adapter = buckets[bucket].adapter;
                 if (!(adapter instanceof PostgresBucketAdapter)) continue;
+                
+                // Avoid buckets from other postgres services
+                // (Migrator is run from the CLI for a specific PostgresService)
+                if (adapter.service != this.service) continue;
 
                 const migration = await this.generateForBucket(module.name, bucket, adapter.tableName, true);
                 if (migration) {
@@ -87,7 +94,7 @@ export class MigrationProvider<
         tableName: string,
         interactive = false
     ) {
-        const generator = new MigrationGenerator(this.daemon, this.sql, module as string, bucket as string, tableName);
+        const generator = MigrationGenerator.fromModule(this.daemon, this.service, module as string, bucket as string, tableName);
         const migration = await generator.generate(interactive);
         const tag = colored(`${module as string}::bucket:${bucket as string}`, 'lightcyan');
         if (!migration) {

@@ -1,5 +1,4 @@
 import { $Bucket, $Space } from 'nesoi/lib/elements';
-import postgres from 'postgres';
 import { $BucketModelField } from 'nesoi/lib/elements/entities/bucket/model/bucket_model.schema';
 import { AnyDaemon, Daemon } from 'nesoi/lib/engine/daemon';
 import { BucketAdapterConfig } from 'nesoi/lib/elements/entities/bucket/adapters/bucket_adapter';
@@ -8,6 +7,7 @@ import { $Migration, $MigrationField } from './migration';
 import { colored } from 'nesoi/lib/engine/util/string';
 import UI from 'nesoi/lib/engine/cli/ui';
 import { Log } from 'nesoi/lib/engine/util/log';
+import { PostgresService } from '../../postgres.service';
 
 class MigrationOption {
     public selected = false;
@@ -23,24 +23,31 @@ type MigrationStep = {
 
 export class MigrationGenerator<
     S extends $Space,
-    D extends AnyDaemon,
     ModuleName extends NoInfer<keyof S['modules']>
 > {
-    
-    protected schema: $Bucket;
-    protected config?: BucketAdapterConfig;
-
-    constructor(
-        daemon: D,
-        private sql: postgres.Sql<any>,
-        private module: ModuleName,
+    public static fromModule<
+        S extends $Space,
+        ModuleName extends NoInfer<keyof S['modules']>
+    >(
+        daemon: AnyDaemon,
+        service: PostgresService,
+        module: ModuleName,
         bucketName: NoInfer<keyof S['modules'][ModuleName]['buckets']>,
-        private tableName: string
+        tableName: string
     ) {
         const bucket = Daemon.getModule(daemon, module).buckets[bucketName];
-        this.schema = bucket.schema;
-        this.config = bucket.adapter.config;
+        const schema = bucket.schema;
+        const config = bucket.adapter.config;
+        return new MigrationGenerator(service, module as string, schema, config, tableName);
     }
+
+    constructor(
+        private service: PostgresService,
+        private module: ModuleName,
+        protected schema: $Bucket,
+        protected config: BucketAdapterConfig,
+        private tableName: string
+    ) {}
 
     public async generate(interactive = false) {
         const current = await this.getCurrentSchema();
@@ -59,7 +66,7 @@ export class MigrationGenerator<
     }
 
     private async getCurrentSchema() {
-        const rawColumns = await this.sql`
+        const rawColumns = await this.service.sql`
             SELECT column_name, udt_name, is_nullable, numeric_precision, numeric_scale
             FROM information_schema.columns 
             WHERE table_name = ${this.tableName}`;
@@ -83,10 +90,10 @@ export class MigrationGenerator<
         columns.forEach(col => {
             mapped[col.column_name] = col;
 
-            const created_by = this.config?.meta.created_by || 'created_by';
-            const created_at = this.config?.meta.created_at || 'created_at';
-            const updated_by = this.config?.meta.updated_by || 'updated_by';
-            const updated_at = this.config?.meta.updated_at || 'updated_at';
+            const created_by = this.config.meta.created_by || 'created_by';
+            const created_at = this.config.meta.created_at || 'created_at';
+            const updated_by = this.config.meta.updated_by || 'updated_by';
+            const updated_at = this.config.meta.updated_at || 'updated_at';
             if (col.column_name === created_by
                 || col.column_name === created_at
                 || col.column_name === updated_by
@@ -134,10 +141,10 @@ export class MigrationGenerator<
 
         // Add meta fields when creating table
         if (!current) {
-            const created_by = this.config?.meta.created_by || 'created_by';
-            const created_at = this.config?.meta.created_at || 'created_at';
-            const updated_by = this.config?.meta.updated_by || 'updated_by';
-            const updated_at = this.config?.meta.updated_at || 'updated_at';
+            const created_by = this.config.meta.created_by || 'created_by';
+            const created_at = this.config.meta.created_at || 'created_at';
+            const updated_by = this.config.meta.updated_by || 'updated_by';
+            const updated_at = this.config.meta.updated_at || 'updated_at';
             steps.push({ options: [new MigrationOption(new $MigrationField(created_by, {
                 create: { type: 'character(64)', nullable: true }
             }))]});
@@ -380,7 +387,7 @@ export class MigrationGenerator<
             fields.push(schema);
         }
 
-        const migration = new $Migration(this.module as string, type, this.tableName, fields);
+        const migration = new $Migration(this.service.name, this.module as string, type, this.tableName, fields);
 
         if (interactive) {
             console.clear();

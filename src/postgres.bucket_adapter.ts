@@ -32,7 +32,7 @@ export class PostgresBucketAdapter<
 
     getQueryMeta() {
         return {
-            scope: 'PG',
+            scope: `PG.${this.service.name}`,
             avgTime: 50
         };
     }

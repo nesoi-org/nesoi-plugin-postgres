@@ -1,6 +1,6 @@
 import 'nesoi/tools/dotenv';
 import { Log } from 'nesoi/lib/engine/util/log';
-import BigRock from '../apps/bigrock.app';
+import BigRock from '../apps/main.app';
 
 Log.level = 'info';
 
@@ -9,4 +9,4 @@ async function main() {
     await app.cli();
 }
 
-main();
+void main();

@@ -8,6 +8,7 @@ type MigrationFn = ($: { sql: postgres.Sql<any>, trx: AnyTrxNode }) => Promise<v
  */
 export type MigrationRow = {
     id: number,
+    service: string,
     module: string,
     name: string,
     description?: string,
@@ -20,6 +21,7 @@ export type MigrationRow = {
  * A file on disk describing one migration.
  */
 export type MigrationFile = {
+    service: string,
     module: string,
     name: string,
     path: string,
@@ -36,6 +38,7 @@ export class MigrationRoutine {
     public down: MigrationFn;
 
     constructor($: {
+        service: string,
         hash?: string,
         description?: string,
         up: MigrationFn,

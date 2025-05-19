@@ -27,7 +27,7 @@ export class cmd_check extends CLICommand {
             UI.result('ok', 'Connection to PostgreSQL working.');
         else
             UI.result('error', 'Connection to PostgreSQL not working.', res);
-        await MigrationProvider.create(daemon, this.service.sql);
+        await MigrationProvider.create(daemon, this.service);
     }
 }
 
@@ -78,7 +78,7 @@ export class cmd_create_db extends CLICommand {
         catch (e) {
             UI.result('error', `Failed to create database ${name}`, e);
         }
-        await MigrationProvider.create(daemon, this.service.sql);
+        await MigrationProvider.create(daemon, this.service);
     }
 }
 
@@ -94,7 +94,7 @@ export class cmd_status extends CLICommand {
         );
     }
     async run(daemon: AnyDaemon) {
-        const migrator = await MigrationProvider.create(daemon, this.service.sql);
+        const migrator = await MigrationProvider.create(daemon, this.service);
         console.log(migrator.status.describe());
     }
 }
@@ -116,7 +116,7 @@ export class cmd_make_empty_migration extends CLICommand {
     async run(daemon: AnyDaemon, $: { name?: string }) {
         const module = await UI.select('Pick a module to create the migration into:', Daemon.getModules(daemon).map(m => m.name));
         const name = $.name || await UI.question('Migration name');
-        const migration = $Migration.empty(module.value, name);
+        const migration = $Migration.empty(this.service.name, module.value, name);
         const filepath = migration.save();
         this.cli.openEditor(filepath);
     }
@@ -140,14 +140,14 @@ export class cmd_make_migrations extends CLICommand {
         console.clear();
         // TODO: restrict by tag
 
-        const migrator = await MigrationProvider.create(daemon, this.service.sql);
+        const migrator = await MigrationProvider.create(daemon, this.service);
         const migrations = await migrator.generate();
         
         for (const migration of migrations) {
             migration.save();
         }
         
-        await MigrationRunner.up(daemon, this.service.sql, 'batch', undefined, true);
+        await MigrationRunner.up(daemon, this.service, 'batch', undefined, true);
     }
 }
 
@@ -164,7 +164,7 @@ export class cmd_migrate_up extends CLICommand {
     }
     async run(daemon: AnyDaemon) {
         console.clear();
-        await MigrationRunner.up(daemon, this.service.sql, 'batch', undefined, true);        
+        await MigrationRunner.up(daemon, this.service, 'batch', undefined, true);        
     }
 }
 
@@ -181,7 +181,7 @@ export class cmd_migrate_one_up extends CLICommand {
     }
     async run(daemon: AnyDaemon) {
         console.clear();
-        await MigrationRunner.up(daemon, this.service.sql, 'one', undefined, true);        
+        await MigrationRunner.up(daemon, this.service, 'one', undefined, true);        
     }
 }
 
@@ -198,7 +198,7 @@ export class cmd_migrate_down extends CLICommand {
     }
     async run(daemon: AnyDaemon) {
         console.clear();
-        await MigrationRunner.down(daemon, this.service.sql, 'batch');        
+        await MigrationRunner.down(daemon, this.service, 'batch');        
     }
 }
 
@@ -215,7 +215,7 @@ export class cmd_migrate_one_down extends CLICommand {
     }
     async run(daemon: AnyDaemon) {
         console.clear();
-        await MigrationRunner.down(daemon, this.service.sql, 'one');        
+        await MigrationRunner.down(daemon, this.service, 'one');        
     }
 }
 

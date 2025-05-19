@@ -10,6 +10,10 @@ import { MigrationRunnerStatus } from './status';
 import { MigrationFile, MigrationRoutine, MigrationRow } from '..';
 import UI from 'nesoi/lib/engine/cli/ui';
 import { $Migration } from '../generator/migration';
+import { PostgresBucketAdapter } from '../../postgres.bucket_adapter';
+import { PostgresService } from '../../postgres.service';
+import { TrxEngine } from 'nesoi/lib/engine/transaction/trx_engine';
+import { Module } from 'nesoi/lib/engine/module';
 
 export class MigrationRunner {
 
@@ -17,7 +21,7 @@ export class MigrationRunner {
     
     // Scan (to generate status)
 
-    private static async scanFiles(daemon: AnyDaemon, migrations_dir: string) {
+    private static async scanFiles(daemon: AnyDaemon, service: PostgresService, migrations_dir: string) {
 
         const modules = Daemon.getModules(daemon);
         
@@ -34,6 +38,7 @@ export class MigrationRunner {
                         return;
                     }
                     files.push({
+                        service: service.name,
                         module: module.name,
                         name: node.name,
                         path: nodePath
@@ -73,11 +78,11 @@ export class MigrationRunner {
 
     public static async status(
         daemon: AnyDaemon,
-        sql: postgres.Sql<any>,
+        service: PostgresService,
         migrations_dir: string
     ) {
-        const migrationFiles = await MigrationRunner.scanFiles(daemon, migrations_dir);
-        const migrationRows = await MigrationRunner.scanRows(sql);
+        const migrationFiles = await MigrationRunner.scanFiles(daemon, service, migrations_dir);
+        const migrationRows = await MigrationRunner.scanRows(service.sql);
         return new MigrationRunnerStatus(migrationFiles, migrationRows);
     }
 
@@ -85,13 +90,15 @@ export class MigrationRunner {
 
     public static async up(
         daemon: AnyDaemon,
-        sql: postgres.Sql<any>,
+        service: PostgresService,
         mode: 'one' | 'batch' = 'one',
         dirpath: string = 'migrations',
         interactive = false
     ) {
-        let status = await MigrationRunner.status(daemon, sql, dirpath);
+        let status = await MigrationRunner.status(daemon, service, dirpath);
         console.log(status.describe());
+
+        await this.migrateTrash(daemon, service, status);
 
         const pending = status.items.filter(item => item.state === 'pending');
         if (!pending.length) {
@@ -107,7 +114,7 @@ export class MigrationRunner {
             }
         }
         
-        await sql.begin(async sql => {
+        await service.sql.begin(async sql => {
             if (mode === 'one') {
                 const migration = pending[0];
                 await this.migrateUp(daemon, sql, migration, status.batch + 1);
@@ -119,17 +126,17 @@ export class MigrationRunner {
             }
         });
 
-        status = await MigrationRunner.status(daemon, sql, dirpath);
+        status = await MigrationRunner.status(daemon, service, dirpath);
         console.log(status.describe());
     }
 
     public static async down(
         daemon: AnyDaemon,
-        sql: postgres.Sql<any>,
+        service: PostgresService,
         mode: 'one' | 'batch' = 'one',
         dirpath: string = 'migrations'
     ) {
-        let status = await MigrationRunner.status(daemon, sql, dirpath);
+        let status = await MigrationRunner.status(daemon, service, dirpath);
         console.log(status.describe());
 
         const lastBatch = status.items.filter(item => item.batch === status.batch);
@@ -144,7 +151,7 @@ export class MigrationRunner {
             return;
         }
         
-        await sql.begin(async sql => {
+        await service.sql.begin(async sql => {
             if (mode === 'one') {
                 const migration = lastBatch.at(-1)!;
                 await this.migrateDown(daemon, sql, migration);
@@ -156,7 +163,7 @@ export class MigrationRunner {
             }
         });
 
-        status = await MigrationRunner.status(daemon, sql, dirpath);
+        status = await MigrationRunner.status(daemon, service, dirpath);
         console.log(status.describe());
     }
 
@@ -164,14 +171,15 @@ export class MigrationRunner {
 
         up: async (
             daemon: AnyDaemon,
-            sql: postgres.Sql<any>,
+            service: PostgresService,
             migration: $Migration,
             dirpath: string = 'migrations'
         ) => {
-            let status = await MigrationRunner.status(daemon, sql, dirpath);
+            let status = await MigrationRunner.status(daemon, service, dirpath);
             console.log(status.describe());
     
             const routine = new MigrationRoutine({
+                service: service.name,
                 description: migration.description,
                 up: async($: { sql: postgres.Sql<any> }) => {
                     for (const sql of migration.sqlUp()) {
@@ -192,15 +200,90 @@ export class MigrationRunner {
                 hash: routine.hash,
                 routine
             };
-            await sql.begin(async sql => {
+            await service.sql.begin(async sql => {
                 await this.migrateUp(daemon, sql, mig, status.batch + 1);
             });
     
-            status = await MigrationRunner.status(daemon, sql, dirpath);
+            status = await MigrationRunner.status(daemon, service, dirpath);
             console.log(status.describe());
         }
 
     };
+
+    public static internal = {
+
+        up: async (
+            daemon: AnyDaemon,
+            service: PostgresService,
+            module: string,
+            name: string,
+            routine: MigrationRoutine,
+            dirpath: string = 'migrations'
+        ) => {
+            let status: MigrationRunnerStatus|undefined = undefined;
+
+            if (name !== 'migrations:v1') {
+                status = await MigrationRunner.status(daemon, service, dirpath);
+                console.log(status.describe());
+            }
+    
+            const mig: MigrationRunnerStatus['items'][number] = {
+                service: service.name,
+                module,
+                name,
+                state: 'pending',
+                hash: routine.hash,
+                routine
+            };
+            await service.sql.begin(async sql => {
+                await this.migrateUp(daemon, sql, mig, -1);
+            });
+            
+            status = await MigrationRunner.status(daemon, service, dirpath);
+            console.log(status.describe());
+        }
+
+    };
+
+    // Trash
+
+    private static async migrateTrash(
+        daemon: AnyDaemon,
+        service: PostgresService,
+        status: MigrationRunnerStatus
+    ) {
+        const modules = Daemon.getModules(daemon);
+        const trashTables = new Set<string>();
+
+        for (const module of modules) {
+
+            if (module.trash) {
+                // Avoid non-postgres trash buckets
+                const adapter = module.trash.adapter;
+                if (!(adapter instanceof PostgresBucketAdapter)) continue;
+                
+                // Avoid trash buckets from other postgres services
+                // (Migrator is run from the CLI for a specific PostgresService)
+                if (adapter.service != service) continue;
+
+                trashTables.add(adapter.tableName);
+            }
+        }
+
+        for (const tableName of trashTables) {
+            const done = status.items.filter(item =>
+                item.module === '__nesoi_postgres'
+                && item.name.startsWith(`trash:${tableName}:`)
+            ).map(item => item.name);
+            const routines: [string, MigrationRoutine][] = [
+                [`trash:${tableName}:v1`, (await import('../../migrations/__nesoi_trash_v1')).default(service.name, tableName)]
+            ];
+            for (const routine of routines) {
+                if (done.includes(routine[0])) continue;
+                await MigrationRunner.internal.up(daemon, service, '__nesoi_postgres', routine[0], routine[1]);
+            }
+        }
+    }
 
     // Implementation Up/Down
 
@@ -211,6 +294,13 @@ export class MigrationRunner {
         batch: number
     ) {
         Log.info('migrator' as any, 'up', `Running migration ${colored('▲ UP', 'lightgreen')} ${colored(migration.name, 'lightblue')}`);
+        
+        if (migration.module === '__nesoi_postgres') {
+            const module = new Module('__nesoi_postgres', { builders: [] });
+            const trxEngines = (daemon as any).trxEngines as AnyDaemon['trxEngines'];
+            trxEngines['__nesoi_postgres'] = new TrxEngine('plugin:postgres', module, {}, {}, {});
+        }
+        
         const status = await daemon.trx(migration.module)
             .run(async trx => {
                 Trx.set(trx, 'sql', sql);
@@ -223,13 +313,14 @@ export class MigrationRunner {
             throw new Error('Migration failed. Rolling back all batch changes.');
         }
         const row = {
+            service: migration.service,
             module: migration.module,
             name: migration.name,
             description: migration.routine!.description,
             batch,
             timestamp: NesoiDatetime.now(),
             hash: migration.hash || null
-        } as Record<string, any>;
+        } as Omit<MigrationRow, 'id'|'timestamp'>;
         if (migration.description) {
             row.description = migration.description;
         }
