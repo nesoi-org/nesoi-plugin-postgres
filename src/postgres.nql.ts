@@ -114,7 +114,7 @@ export class PostgresNQLRunner extends NQLRunner {
 
 
         const order = part.union.order;
-        const order_str = `ORDER BY ${order?.by || meta.updated_at} ${order?.dir === 'asc' ? 'ASC' : 'DESC'}`;
+        const order_str = `ORDER BY ${order?.by[0] || meta.updated_at} ${order?.dir[0] === 'asc' ? 'ASC' : 'DESC'}`;
 
         let limit_str = '';
         if (pagination?.page || pagination?.perPage) {
@@ -124,7 +124,7 @@ export class PostgresNQLRunner extends NQLRunner {
         }
 
         let count: number|undefined = undefined;
-        if (pagination?.count) {
+        if (pagination?.returnTotal) {
             const res_count = await sql.unsafe(`SELECT count(*) ${sql_str}`, sql_params);
             count = parseInt(res_count[0].count);
         }
