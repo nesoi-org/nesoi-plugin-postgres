@@ -47,7 +47,7 @@ export class PostgresBucketAdapter<
     /* Read operations */
 
     async index(trx: AnyTrxNode) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
         const objs = await this.guard(sql)`
             SELECT *
             FROM ${sql(this.tableName)}
@@ -57,7 +57,7 @@ export class PostgresBucketAdapter<
     }
 
     async get(trx: AnyTrxNode, id: Obj['id']) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
         const objs = await this.guard(sql)`
             SELECT *
             FROM ${sql(this.tableName)}
@@ -84,7 +84,7 @@ export class PostgresBucketAdapter<
         trx: AnyTrxNode,
         obj: Record<string, any>
     ) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
 
         // Use schema fields excluding id
         const keys = Object.keys(this.schema.model.fields)
@@ -108,7 +108,7 @@ export class PostgresBucketAdapter<
         trx: AnyTrxNode,
         objs: Record<string, any>[]
     ) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
 
         // Use schema fields excluding id
         const keys = Object.keys(this.schema.model.fields)
@@ -136,7 +136,7 @@ export class PostgresBucketAdapter<
         trx: AnyTrxNode,
         obj: Record<string, any>
     ) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
 
         // Use schema keys that exist on object
         const keys = Object.keys(this.schema.model.fields)
@@ -174,7 +174,7 @@ export class PostgresBucketAdapter<
         trx: AnyTrxNode,
         obj: Record<string, any>
     ) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
 
         // Use all schema keys
         const keys = Object.keys(this.schema.model.fields)
@@ -207,7 +207,7 @@ export class PostgresBucketAdapter<
         trx: AnyTrxNode,
         obj: Record<string, any>
     ) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
 
         // Use all schema keys
         const keys = Object.keys(this.schema.model.fields)
@@ -245,7 +245,7 @@ export class PostgresBucketAdapter<
         trx: AnyTrxNode,
         id: Obj['id']
     ) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
         await this.guard(sql)`
             DELETE FROM ${sql(this.tableName)}
             WHERE id = ${ id }
@@ -256,7 +256,7 @@ export class PostgresBucketAdapter<
         trx: AnyTrxNode,
         ids: Obj['id'][]
     ) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
         await this.guard(sql)`
             DELETE FROM ${sql(this.tableName)}
             WHERE id IN ${ ids }
@@ -400,6 +400,7 @@ export class PostgresBucketAdapter<
         
         return {
             tableName: adapter.tableName,
+            serviceName: adapter.service.name,
             meta: adapter.config.meta
         };
     }

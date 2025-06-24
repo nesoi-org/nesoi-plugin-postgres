@@ -117,11 +117,11 @@ export class MigrationRunner {
         await service.sql.begin(async sql => {
             if (mode === 'one') {
                 const migration = pending[0];
-                await this.migrateUp(daemon, sql, migration, status.batch + 1);
+                await this.migrateUp(daemon, service.name, sql, migration, status.batch + 1);
             }
             else {
                 for (const migration of pending) {
-                    await this.migrateUp(daemon, sql, migration, status.batch + 1);
+                    await this.migrateUp(daemon, service.name, sql, migration, status.batch + 1);
                 }
             }
         });
@@ -154,11 +154,11 @@ export class MigrationRunner {
         await service.sql.begin(async sql => {
             if (mode === 'one') {
                 const migration = lastBatch.at(-1)!;
-                await this.migrateDown(daemon, sql, migration);
+                await this.migrateDown(daemon, service.name, sql, migration);
             }
             else {
                 for (const migration of lastBatch) {
-                    await this.migrateDown(daemon, sql, migration);
+                    await this.migrateDown(daemon, service.name, sql, migration);
                 }
             }
         });
@@ -201,7 +201,7 @@ export class MigrationRunner {
                 routine
             };
             await service.sql.begin(async sql => {
-                await this.migrateUp(daemon, sql, mig, status.batch + 1);
+                await this.migrateUp(daemon, service.name, sql, mig, status.batch + 1);
             });
     
             status = await MigrationRunner.status(daemon, service, dirpath);
@@ -236,7 +236,7 @@ export class MigrationRunner {
                 routine
             };
             await service.sql.begin(async sql => {
-                await this.migrateUp(daemon, sql, mig, -1);
+                await this.migrateUp(daemon, service.name, sql, mig, -1);
             });
             
             status = await MigrationRunner.status(daemon, service, dirpath);
@@ -289,7 +289,8 @@ export class MigrationRunner {
 
     private static async migrateUp(
         daemon: AnyDaemon,
-        sql: postgres.Sql<any>,
+        serviceName: string,
+        sql: postgres.Sql,
         migration: MigrationRunnerStatus['items'][number],
         batch: number
     ) {
@@ -303,7 +304,7 @@ export class MigrationRunner {
         
         const status = await daemon.trx(migration.module)
             .run(async trx => {
-                Trx.set(trx, 'sql', sql);
+                Trx.set(trx, serviceName+'.sql', sql);
                 await migration.routine!.up({
                     sql,
                     trx
@@ -333,6 +334,7 @@ export class MigrationRunner {
 
     private static async migrateDown(
         daemon: AnyDaemon,
+        serviceName: string,
         sql: postgres.Sql<any>,
         migration: MigrationRunnerStatus['items'][number]
     ) {
@@ -348,7 +350,7 @@ export class MigrationRunner {
         else {
             const status = await daemon.trx(migration.module)
                 .run(async trx => {
-                    Trx.set(trx, 'sql', sql);
+                    Trx.set(trx, serviceName+'.sql', sql);
                     await migration.routine!.down({
                         sql,
                         trx

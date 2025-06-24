@@ -149,13 +149,13 @@ export class MigrationGenerator<
                 create: { type: 'character(64)', nullable: true }
             }))]});
             steps.push({ options: [new MigrationOption(new $MigrationField(created_at, {
-                create: { type: 'timestamp without time zone' }
+                create: { type: 'timestamp with time zone' }
             }))]});
             steps.push({ options: [new MigrationOption(new $MigrationField(updated_by, {
                 create: { type: 'character(64)', nullable: true }
             }))]});
             steps.push({ options: [new MigrationOption(new $MigrationField(updated_at, {
-                create: { type: 'timestamp without time zone' }
+                create: { type: 'timestamp with time zone' }
             }))]});
         }
 
@@ -256,7 +256,7 @@ export class MigrationGenerator<
         let type = {
             'boolean': () => 'bool',
             'date': () => 'date',
-            'datetime': () => 'timestamp',
+            'datetime': () => 'timestamp with time zone',
             'duration': () => 'interval',
             'decimal': () => 'numeric',
             'dict': () => 'jsonb',
@@ -287,6 +287,7 @@ export class MigrationGenerator<
             'bool': () => 'boolean',
             'date': () => 'date',
             'timestamp': () => 'timestamp',
+            'timestamp with time zone': () => 'timestamp with time zone',
             'numeric': () => `numeric(${extra.n0},${extra.n1})`,
             'jsonb': () => 'jsonb',
             'bpchar': () => 'character(64)', // TODO: read from schema maxLength

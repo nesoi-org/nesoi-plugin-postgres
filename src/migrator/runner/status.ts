@@ -63,13 +63,17 @@ export class MigrationRunnerStatus {
         let str = '';
         str += `◆ ${colored('Migration Status', 'lightblue')}\n`;
         this.items.forEach(item => {
+            const module = colored(item.module, 'lightcyan');
+            if (item.module.startsWith('__')) {
+                str += `└ ${item.id || '*'}\t${colored('nesoi', 'darkgray')}\t${module} ${item.name} @ ${item.batch || '...'}\n`;
+                return;
+            }
             const state = {
                 'done': () => colored('done', 'green'),
                 'pending': () => colored('pending', 'yellow'),
                 'lost': () => colored('lost', 'red'),
                 'modified': () => colored('modified', 'brown'),
             }[item.state]();
-            const module = colored(item.module, 'lightcyan');
             str += `└ ${item.id || '*'}\t${state}\t${module} ${item.name} @ ${item.batch || '...'}\n`;
         });
         return str;

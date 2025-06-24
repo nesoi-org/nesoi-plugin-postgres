@@ -122,7 +122,11 @@ describe('Postgres Bucket Adapter', () => {
 
             // then
             expect(id).toBeTruthy();
-            expect(obj).toEqual({
+            expect({
+                ...obj,
+                // The returned timezone doesn't necessarily matches the input
+                p_datetime: new NesoiDatetime((obj).p_datetime.epoch, 'Z'),
+            }).toEqual({
                 ...input,
                 created_at: expect.any(NesoiDatetime),
                 updated_at: expect.any(NesoiDatetime),
@@ -148,7 +152,11 @@ describe('Postgres Bucket Adapter', () => {
 
             // then
             expect(id).toBeTruthy();
-            expect(obj).toEqual({
+            expect({
+                ...obj,
+                // The returned timezone doesn't necessarily matches the input
+                p_datetime: new NesoiDatetime(obj.p_datetime.epoch, 'Z'),
+            }).toEqual({
                 ...input,
                 created_at: expect.any(NesoiDatetime),
                 updated_at: expect.any(NesoiDatetime),
@@ -186,14 +194,22 @@ describe('Postgres Bucket Adapter', () => {
             // then
             expect(id_create).toBeTruthy();
             expect(id_update).toEqual(id_create);
-            expect(created).toEqual({
+            expect({
+                ...created,
+                // The returned timezone doesn't necessarily matches the input
+                p_datetime: new NesoiDatetime(created.p_datetime.epoch, 'Z'),
+            }).toEqual({
                 ...input1,
                 created_at: expect.any(NesoiDatetime),
                 updated_at: expect.any(NesoiDatetime),
                 created_by: null,
                 updated_by: null
             });
-            expect(updated).toEqual({
+            expect({
+                ...updated,
+                // The returned timezone doesn't necessarily matches the input
+                p_datetime: new NesoiDatetime(updated.p_datetime.epoch, 'Z'),
+            }).toEqual({
                 ...input2,
                 created_at: expect.any(NesoiDatetime),
                 updated_at: expect.any(NesoiDatetime),

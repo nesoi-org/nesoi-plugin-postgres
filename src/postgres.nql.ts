@@ -10,11 +10,9 @@ type Obj = Record<string, any>
 
 export class PostgresNQLRunner extends NQLRunner {
     
-    protected sql?: postgres.Sql<any>;
-
     async run(trx: AnyTrxNode, part: NQL_Part, params: Obj, pagination?: NQL_Pagination) {
-        const sql = Trx.get<postgres.Sql<any>>(trx, 'sql');
-        const { tableName, meta } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
+        const { tableName, serviceName, meta } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
+        const sql = Trx.get<postgres.Sql<any>>(trx, serviceName+'.sql');
 
         const sql_params: any[] = [];
 
@@ -136,7 +134,7 @@ export class PostgresNQLRunner extends NQLRunner {
         
         return {
             data,
-            count,
+            totalItems: count,
             page: pagination?.page,
             perPage: pagination?.perPage,
         };

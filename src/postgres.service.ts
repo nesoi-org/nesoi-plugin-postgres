@@ -46,16 +46,21 @@ export class PostgresService<Name extends string = 'pg'>
                     serialize : (val?: NesoiDatetime) => typeof val === 'string'
                         ? val
                         : val?.toISO(),
-                    parse     : (val?: string) => NesoiDatetime.fromISO((val?.replace(' ','T') || '')+'Z')
+                    parse     : (val?: string) => val
+                        ? NesoiDatetime.fromISO((val.replace(' ','T') || '')+'Z')
+                        : undefined
                 },
                 datetime_z: {
                     to        : 1184,
                     from      : [1184],
-                    serialize : (val?: NesoiDatetime) =>
+                    serialize : (val?: NesoiDatetime) => 
                         typeof val === 'string'
                             ? val
                             : val?.toISO(),
-                    parse     : (val?: string) => NesoiDatetime.fromISO((val?.replace(' ','T') || '')+'Z')
+                    parse     : (val?: string) => 
+                        val
+                            ? NesoiDatetime.fromISO((val.replace(' ','T') || ''))
+                            : undefined
                 },
                 decimal: {
                     to        : 1700,
@@ -73,14 +78,19 @@ export class PostgresService<Name extends string = 'pg'>
     }
 
     public static wrap(service: string) {
-        return (trx: AnyTrx, fn: TrxEngineWrapFn<any, any>, services: Record<string, any>) => {
-            const postgres = services[service].sql as postgres.Sql<any>;
-            return postgres.begin(sql => {
-                Trx.set(trx.root, 'sql', sql);
-                return fn(trx.root);
-            });
+        const chain = (service: string, __fn?: (...args: any) => any) => {
+            const base = (trx: AnyTrx, fn: TrxEngineWrapFn<any, any>, services: Record<string, any>) => {
+                const postgres = services[service].sql as postgres.Sql<any>;
+                return postgres.begin(sql => {
+                    Trx.set(trx.root, service+'.sql', sql);
+                    if (__fn) return __fn(trx, fn, services);
+                    return fn(trx.root);
+                });
+            };
+            base.and = (service: string) => chain(service, base);
+            return base;
         };
- 
+        return chain(service);
     }
 
 }
