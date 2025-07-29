@@ -28,7 +28,7 @@ export class MigrationRunner {
         // Read migration files of each module
         const files: Omit<MigrationFile, 'routine'>[] = [];
         for (const module of modules) {
-            const modulepath = path.join('modules', module.name, migrations_dir);
+            const modulepath = path.join('modules', ...module.subdir, module.name, migrations_dir);
             
             if (!fs.existsSync(modulepath)) continue;
             fs.readdirSync(modulepath, { withFileTypes: true })
@@ -40,7 +40,7 @@ export class MigrationRunner {
                     files.push({
                         service: service.name,
                         module: module.name,
-                        name: node.name,
+                        name: node.name.replace(/\.[j|t]s$/, ''),
                         path: nodePath
                     });
                 });
@@ -83,7 +83,7 @@ export class MigrationRunner {
     ) {
         const migrationFiles = await MigrationRunner.scanFiles(daemon, service, migrations_dir);
         const migrationRows = await MigrationRunner.scanRows(service.sql);
-        return new MigrationRunnerStatus(migrationFiles, migrationRows);
+        return new MigrationRunnerStatus(daemon, migrationFiles, migrationRows);
     }
 
     // Public Up / Down
@@ -157,7 +157,8 @@ export class MigrationRunner {
                 await this.migrateDown(daemon, service.name, sql, migration);
             }
             else {
-                for (const migration of lastBatch) {
+                const revLastBatch = [...lastBatch].reverse();
+                for (const migration of revLastBatch) {
                     await this.migrateDown(daemon, service.name, sql, migration);
                 }
             }
@@ -196,6 +197,7 @@ export class MigrationRunner {
             const mig: MigrationRunnerStatus['items'][number] = {
                 // eslint-disable-next-line @typescript-eslint/no-misused-spread
                 ...migration,
+                module: migration.module.name,
                 state: 'pending',
                 hash: routine.hash,
                 routine
@@ -229,7 +231,7 @@ export class MigrationRunner {
     
             const mig: MigrationRunnerStatus['items'][number] = {
                 service: service.name,
-                module,
+                module: module,
                 name,
                 state: 'pending',
                 hash: routine.hash,

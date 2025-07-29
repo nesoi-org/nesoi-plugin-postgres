@@ -1,4 +1,4 @@
-import { $Bucket, $Space } from 'nesoi/lib/elements';
+import { $Bucket, $Module, $Space } from 'nesoi/lib/elements';
 import { $BucketModelField } from 'nesoi/lib/elements/entities/bucket/model/bucket_model.schema';
 import { AnyDaemon, Daemon } from 'nesoi/lib/engine/daemon';
 import { BucketAdapterConfig } from 'nesoi/lib/elements/entities/bucket/adapters/bucket_adapter';
@@ -8,6 +8,7 @@ import { colored } from 'nesoi/lib/engine/util/string';
 import UI from 'nesoi/lib/engine/cli/ui';
 import { Log } from 'nesoi/lib/engine/util/log';
 import { PostgresService } from '../../postgres.service';
+import { Module } from 'nesoi/lib/engine/module';
 
 class MigrationOption {
     public selected = false;
@@ -31,19 +32,20 @@ export class MigrationGenerator<
     >(
         daemon: AnyDaemon,
         service: PostgresService,
-        module: ModuleName,
+        moduleName: ModuleName,
         bucketName: NoInfer<keyof S['modules'][ModuleName]['buckets']>,
         tableName: string
     ) {
-        const bucket = Daemon.getModule(daemon, module).buckets[bucketName];
+        const module = Daemon.getModule(daemon, moduleName);
+        const bucket = module.buckets[bucketName];
         const schema = bucket.schema;
         const config = bucket.adapter.config;
-        return new MigrationGenerator(service, module as string, schema, config, tableName);
+        return new MigrationGenerator(service, module, schema, config, tableName);
     }
 
     constructor(
         private service: PostgresService,
-        private module: ModuleName,
+        private module: Module<any, $Module & { name: ModuleName }>,
         protected schema: $Bucket,
         protected config: BucketAdapterConfig,
         private tableName: string
@@ -246,14 +248,14 @@ export class MigrationGenerator<
         }
     }
 
-    private fieldUdt($: $BucketModelField) {
+    private fieldUdt($: $BucketModelField): string {
         if ($.name === 'id') {
             if ($.type === 'string') {
                 return 'bpchar';
             }
             return 'int4';
         }
-        let type = {
+        const types = {
             'boolean': () => 'bool',
             'date': () => 'date',
             'datetime': () => 'timestamp with time zone',
@@ -266,14 +268,17 @@ export class MigrationGenerator<
             'int': () => 'int4',
             'obj': () => 'jsonb',
             'string': () => 'varchar', // TODO: char() if maxLength
+            'list': () => '',
+            'union': () => { throw new Error('Union fields not supported yet'); },
             'unknown': () => { throw new Error('An unknown field shouldn\'t be stored on SQL'); },
-        }[$.type]();
+        };
 
-        if ($.array) {
-            type = '_' + type;
+        if ($.type === 'list') {
+            return '_' + this.fieldUdt($.children!['#']);
         }
-
-        return type;
+        else {
+            return types[$.type]();
+        }
     }
 
     private fieldTypeFromUdt(udt: string, extra: {
@@ -320,7 +325,7 @@ export class MigrationGenerator<
             if (header_shown) return;
             let str = '';
             str += '┌\n';
-            str += `│ module: ${colored((this.module as string), 'cyan')}\n`;
+            str += `│ module: ${colored(this.module.name, 'cyan')}\n`;
             str += `│ table: ${colored(this.tableName, 'lightcyan')}\n`;
             str += `│ ${colored('⚠ Requires manual review.', 'red')}\n`;
             str += '└\n\n';
@@ -388,7 +393,7 @@ export class MigrationGenerator<
             fields.push(schema);
         }
 
-        const migration = new $Migration(this.service.name, this.module as string, type, this.tableName, fields);
+        const migration = new $Migration(this.service.name, this.module, type, this.tableName, fields);
 
         if (interactive) {
             console.clear();

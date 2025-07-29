@@ -1,5 +1,6 @@
 import { colored } from 'nesoi/lib/engine/util/string';
 import { MigrationFile, MigrationRoutine, MigrationRow } from '..';
+import { AnyDaemon } from 'nesoi/lib/engine/daemon';
 
 export class MigrationRunnerStatus {
 
@@ -19,6 +20,7 @@ export class MigrationRunnerStatus {
     public batch: number;
 
     constructor(
+        daemon: AnyDaemon,
         migrationFiles: MigrationFile[],
         migrationRows: MigrationRow[]
     ) {

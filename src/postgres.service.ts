@@ -16,7 +16,8 @@ export class PostgresService<Name extends string = 'pg'>
     static defaultName = 'pg';
 
     public libPaths = [
-        'modules/*/migrations'
+        'modules/*/migrations',
+        'modules/*/*/migrations'
     ];
 
     public sql!: postgres.Sql<any>;

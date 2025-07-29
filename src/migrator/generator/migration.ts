@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { NesoiDatetime } from 'nesoi/lib/engine/data/datetime';
 import { createHash } from 'crypto';
+import { AnyModule } from 'nesoi/lib/engine/module';
 
 export type $MigrationFieldOperation = {
     create: {
@@ -150,7 +151,7 @@ export class $Migration {
     
     constructor(
         public service: string,
-        public module: string,
+        public module: AnyModule,
         private type: 'create'|'alter'|'custom',
         private tableName: string,
         private fields: $MigrationField[],
@@ -162,7 +163,7 @@ export class $Migration {
     public describe() {
         let str = '';
         str += '┌\n';
-        str += `│ ${colored('module: ' + this.module, 'darkgray')}\n`;
+        str += `│ ${colored('module: ' + this.module.name, 'darkgray')}\n`;
         str += `│ ${colored(this.name, 'lightcyan')}\n`;
         str += '└\n\n';
         if (this.type === 'create') {
@@ -210,7 +211,7 @@ export class $Migration {
     }
 
     public save(dirpath: string = './migrations') {
-        const filedir = path.join('modules', this.module, dirpath);
+        const filedir = path.join('modules', ...this.module.subdir, this.module.name, dirpath);
         fs.mkdirSync(filedir, {recursive: true});
 
         const filepath = path.join(filedir, this.name+'.ts');
@@ -218,7 +219,7 @@ export class $Migration {
         str += 'import { migration } from \'@nesoi/postgres/migrator\';\n';
         str += '\n';
         str += '/**\n';
-        str += ` * $module[${this.module}]\n`;
+        str += ` * $module[${this.module.name}]\n`;
         str += ` * $migration[${this.name}]\n`;
         str += ' *\n';
         str += ` * $type[${this.type}]\n`;
@@ -268,7 +269,7 @@ export class $Migration {
 
     public hash() {
         const hash = createHash('md5');
-        hash.update(`${this.service}.${this.module}.${this.type}.${this.tableName}`);
+        hash.update(`${this.service}.${this.module.name}.${this.type}.${this.tableName}`);
         const up = this.fnUp().replace(/\s*/g,'');
         hash.update(up);
         const down = this.fnDown().replace(/\s*/g,'');
@@ -276,7 +277,7 @@ export class $Migration {
         return hash.digest('hex');
     }
 
-    public static empty(service: string, module: string, name: string) {
-        return new $Migration(service,module,'custom',name,[]);
+    public static empty(service: string, module: AnyModule, name: string) {
+        return new $Migration(service, module,'custom',name,[]);
     }
 }

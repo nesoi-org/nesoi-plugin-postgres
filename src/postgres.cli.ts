@@ -114,9 +114,10 @@ export class cmd_make_empty_migration extends CLICommand {
         );
     }
     async run(daemon: AnyDaemon, $: { name?: string }) {
-        const module = await UI.select('Pick a module to create the migration into:', Daemon.getModules(daemon).map(m => m.name));
+        const moduleName = await UI.select('Pick a module to create the migration into:', Daemon.getModules(daemon).map(m => m.name));
+        const module = Daemon.getModule(daemon, moduleName.value);
         const name = $.name || await UI.question('Migration name');
-        const migration = $Migration.empty(this.service.name, module.value, name);
+        const migration = $Migration.empty(this.service.name, module, name);
         const filepath = migration.save();
         this.cli.openEditor(filepath);
     }
