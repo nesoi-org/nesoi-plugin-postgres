@@ -269,12 +269,15 @@ export class MigrationGenerator<
             'obj': () => 'jsonb',
             'string': () => 'varchar', // TODO: char() if maxLength
             'list': () => '',
-            'union': () => { throw new Error('Union fields not supported yet'); },
+            'union': () => '',
             'unknown': () => { throw new Error('An unknown field shouldn\'t be stored on SQL'); },
         };
 
         if ($.type === 'list') {
             return '_' + this.fieldUdt($.children!['#']);
+        }
+        else if ($.type === 'union') {
+            return this.fieldUdt($.children![0]);
         }
         else {
             return types[$.type]();
@@ -292,6 +295,7 @@ export class MigrationGenerator<
             'bool': () => 'boolean',
             'date': () => 'date',
             'timestamp': () => 'timestamp',
+            'timestamptz': () => 'timestamp with time zone',
             'timestamp with time zone': () => 'timestamp with time zone',
             'numeric': () => `numeric(${extra.n0},${extra.n1})`,
             'jsonb': () => 'jsonb',
