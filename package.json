@@ -1,6 +1,6 @@
 {
   "name": "@nesoi/postgres",
-  "version": "3.0.4",
+  "version": "3.0.9",
   "description": "PostgreSQL plugin for the nesoi framework",
   "main": "index.js",
   "scripts": {
@@ -25,7 +25,7 @@
   },
   "homepage": "https://github.com/nesoi-org/nesoi-postgres#readme",
   "peerDependencies": {
-    "nesoi": "^3.0.0"
+    "nesoi": "^3.1.0"
   },
   "dependencies": {
     "postgres": "3.4.5"

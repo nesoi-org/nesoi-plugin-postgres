@@ -5,12 +5,13 @@ import postgres from 'postgres';
 import { Trx } from 'nesoi/lib/engine/transaction/trx';
 import { PostgresBucketAdapter } from './postgres.bucket_adapter';
 import { Log } from 'nesoi/lib/engine/util/log';
+import { $BucketView } from 'nesoi/lib/elements/entities/bucket/view/bucket_view.schema';
 
 type Obj = Record<string, any>
 
 export class PostgresNQLRunner extends NQLRunner {
     
-    async run(trx: AnyTrxNode, part: NQL_Part, params: Obj, pagination?: NQL_Pagination) {
+    async run(trx: AnyTrxNode, part: NQL_Part, params: Obj, pagination?: NQL_Pagination, view?: $BucketView) {
         const { tableName, serviceName, meta } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
         const sql = Trx.get<postgres.Sql<any>>(trx, serviceName+'.sql');
 
@@ -54,22 +55,7 @@ export class PostgresNQLRunner extends NQLRunner {
                     return `"${column}" IS NOT NULL`;
                 }
             }
-
-            // Fetch value
-            let value;
-            if ('static' in rule.value) {
-                value = rule.value.static;
-            }
-            else if ('param' in rule.value) {
-                value = params[rule.value.param as string]; // TODO: deal with param[]
-            }
-            else {
-                throw new Error('Sub-queries not implemented yet.'); // TODO: subquery
-            }
-
-            // Don't add condition if value is null
-            if (value === undefined) { return ''; }
-
+            
             // Translate operation
             let op = {
                 '==': '=',
@@ -92,13 +78,34 @@ export class PostgresNQLRunner extends NQLRunner {
                 }
             }
 
+            // Fetch value
+            let value;
+            if ('static' in rule.value) {
+                value = rule.value.static;
+            }
+            else if ('param' in rule.value) {
+                value = params[rule.value.param as string]; // TODO: deal with param[]
+            }
+            else {
+                const bucket = rule.value.subquery.bucket;
+                const select = rule.value.subquery.select;
+                const union = rule.value.subquery.union;
+                const { tableName } = PostgresBucketAdapter.getTableMeta(trx, { bucket} as any);
+
+                value = `SELECT ${select} FROM ${tableName} WHERE ${_union(union)}`;
+                return `${rule.not ? 'NOT ' : ''} "${column}" ${op} (${value})`;
+            }
+
+            // Don't add condition if value is null
+            if (value === undefined) { return ''; }
+
             // Special case: "contains" operation
             if (rule.op === 'contains') {
                 value = `%${value}%`;
             }
 
             sql_params.push(value);
-            return `${rule.not ? 'NOT ' : ''} "${column}" ${op} $${sql_params.length}`;
+            return `${rule.not ? 'NOT ' : ''} "${column}" ${op} ($${sql_params.length})`;
         };
 
         // Debug
@@ -127,7 +134,13 @@ export class PostgresNQLRunner extends NQLRunner {
             count = parseInt(res_count[0].count);
         }
 
-        const data = await sql.unsafe(`SELECT * ${sql_str} ${order_str} ${limit_str}`, sql_params).catch((e: unknown) => {
+        const viewFields = view
+            ? Object.entries(view.fields)
+                .filter(e => e[1].scope === 'model')
+                .map(e => e[0])
+            : '*';
+
+        const data = await sql.unsafe(`SELECT ${viewFields} ${sql_str} ${order_str} ${limit_str}`, sql_params).catch((e: unknown) => {
             Log.error('bucket', 'postgres', (e as any).toString(), e as any);
             throw new Error('Database error.');
         }) as Obj[];
