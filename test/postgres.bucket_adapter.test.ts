@@ -64,15 +64,13 @@ async function setup() {
         bucket
     ])
         .service(pg)
-        .config.buckets({
-            'MODULE': {
+        .config.module('MODULE', {
+            buckets: {
                 'BUCKET': {
                     adapter: ($, {pg}) => new PostgresBucketAdapter($, pg, 'nesoi_test_table')
                 }
-            }
-        })
-        .config.trx({
-            'MODULE': {
+            },
+            trx: {
                 wrap: PostgresService.wrap('pg')
             }
         });
