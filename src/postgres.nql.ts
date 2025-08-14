@@ -122,14 +122,19 @@ export class PostgresNQLRunner extends NQLRunner {
         // console.log((str as any).string);
         // End of Debug
 
-        const where_set = new Set<string>();
+        const param_ids = new Set<string>();
+        const wheres: string[] = [];
         for (const paramGroup of params) {
+            if ('id' in paramGroup) {
+                if (param_ids.has(paramGroup.id)) continue;
+                param_ids.add(paramGroup.id);
+            }
             const where = _union(part.union, paramGroup);
             if (where) {
-                where_set.add(where);
+                wheres.push(where);
             }
         }
-        const where = where_set.size ? `WHERE ${[...where_set].join(' OR ')}` : '';
+        const where = wheres.length ? `WHERE ${wheres.join(' OR ')}` : '';
         const sql_str = `FROM ${tableName} ${where}`;
 
         const order = part.union.order;

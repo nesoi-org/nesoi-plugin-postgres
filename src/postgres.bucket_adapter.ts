@@ -6,6 +6,8 @@ import postgres from 'postgres';
 import { Trx } from 'nesoi/lib/engine/transaction/trx';
 import { NQL_QueryMeta } from 'nesoi/lib/elements/entities/bucket/query/nql.schema';
 import { PostgresService } from './postgres.service';
+import { NesoiDatetime } from 'nesoi/lib/engine/data/datetime';
+import { BucketCacheSync } from 'nesoi/lib/elements/entities/bucket/cache/bucket_cache';
 
 export class PostgresBucketAdapter<
     $ extends $Bucket,
@@ -56,7 +58,7 @@ export class PostgresBucketAdapter<
         return objs;
     }
 
-    async get(trx: AnyTrxNode, id: Obj['id']) {
+    async get(trx: AnyTrxNode, id: Obj['id']): Promise<undefined | Obj> {
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
         const objs = await this.guard(sql)`
             SELECT *
@@ -265,129 +267,153 @@ export class PostgresBucketAdapter<
 
     /* Cache Operations */
 
-    syncOne(
-    // async syncOne(
-        // trx: AnyTrxNode,
-        // id: Obj['id'],
-        // lastObjUpdateEpoch: number
+    /**
+     * Given an id, sync that object only.
+     * - If the id doesn't exist on the source, return 'deleted'
+     * - If it does, check if it changed since lastObjUpdateEpoch
+     *      - If yes, return the updated object
+     *      - If not, return null
+     * @returns One of the below:
+     *  - `null`: Object hasn't changed 
+     *  - `Obj`: Object has changed
+     *  - `deleted`: Object was deleted
+     */
+    async syncOne(
+        trx: AnyTrxNode,
+        id: Obj['id'],
+        lastObjUpdateEpoch: number
     ) {
-        throw new Error('Not implemented yet.');
-        return {} as any;
-        // // 1. Check if object was deleted
-        // const obj = await this.get(trx, id);
-        // if (!obj) {
-        //     return 'deleted' as const;
-        // }
+        
+        // 1. Check if object was deleted
+        const obj = await this.get(trx, id);
+        if (!obj) {
+            return 'deleted' as const;
+        }
 
         // // 2. Check if object was updated
-        // const updateEpoch = this.getUpdateEpoch(obj);
+        const updateEpoch = this.getUpdateEpoch(obj);
 
-        // const hasObjUpdated = updateEpoch > lastObjUpdateEpoch;
-        // if (!hasObjUpdated) {
-        //     return null;
-        // }
+        const hasObjUpdated = updateEpoch > lastObjUpdateEpoch;
+        if (!hasObjUpdated) {
+            return null;
+        }
 
-        // // 3. Return updated object and epoch
-        // return {
-        //     obj,
-        //     updateEpoch
-        // };
+        // 3. Return updated object and epoch
+        return {
+            obj,
+            updateEpoch
+        };
     }
 
-    syncOneAndPast(
-    // async syncOneAndPast(
-    //     trx: AnyTrxNode,
-    //     id: Obj['id'],
-    //     lastUpdateEpoch: number
-    ) {
-        throw new Error('Not implemented yet.');
-        return {} as any;
-        // // 1. Check if object was deleted
-        // const obj = await this.get(trx, id);
-        // if (!obj) {
-        //     return 'deleted' as const;
-        // }
+    /**
+     * Given an id, if the object was not deleted and has changed on source,
+     * sync the object and all objects of this bucket updated before it.
+     * @returns One of the below:
+     *  - `null`: Object hasn't changed 
+     *  - `Obj[]`: Object or past objects changed
+     *  - `deleted`: Object was deleted
+     */
+    async syncOneAndPast(
+        trx: AnyTrxNode,
+        id: Obj['id'],
+        lastUpdateEpoch: number
+    ): Promise<null|'deleted'|BucketCacheSync<Obj>[]>  {
+        // 1. Check if object was deleted
+        const obj = await this.get(trx, id);
+        if (!obj) {
+            return 'deleted' as const;
+        }
 
-        // // 2. Check if object was updated
-        // const objUpdateEpoch = this.getUpdateEpoch(obj);
-        // const hasObjUpdated = objUpdateEpoch > lastUpdateEpoch;       
-        // if (!hasObjUpdated) {
-        //     return null;
-        // }
+        // 2. Check if object was updated
+        const objUpdateEpoch = this.getUpdateEpoch(obj);
+        const hasObjUpdated = objUpdateEpoch > lastUpdateEpoch;       
+        if (!hasObjUpdated) {
+            return null;
+        }
 
-        // // 3. Return all objects updated and the max epoch
-        // let updateEpoch = 0;
-        // const changed = (Object.values(this.data) as Obj[])
-        //     .map(obj => {
-        //         const epoch = this.getUpdateEpoch(obj);
-        //         if (epoch > updateEpoch) {
-        //             updateEpoch = epoch;
-        //         }
-        //         return { obj, updateEpoch: epoch };
-        //     })
-        //     .filter(obj => obj.updateEpoch > lastUpdateEpoch);
+        // 3. Return all objects updated
+        const changed = await this.query(trx, {
+            'updated_at >': new NesoiDatetime(lastUpdateEpoch).toISO()
+        });
 
-        // if (!changed.length) {
-        //     return null;
-        // }
+        if (!changed.data.length) {
+            return null;
+        }
 
-        // return changed;
+        return changed.data.map(obj => ({
+            obj: obj as Obj,
+            updateEpoch: NesoiDatetime.fromISO((obj as any).updated_at).epoch
+        }));
     }
 
-    syncAll(
-    // async syncAll(
-    //     trx: AnyTrxNode,
-    //     lastHash?: string,
-    //     lastUpdateEpoch = 0
-    ) {
-        throw new Error('Not implemented yet.');
-        return {} as any;
-        // // 1. Hash the current ids
-        // const idStr = Object.keys(this.data).sort().join('');
-        // const hash = createHash('md5').update(idStr).digest('hex');
+    /**
+     * Resync the entire cache.
+     * - Hash the ids, check if it matches the incoming hash
+     *   - If yes, read all data that changed since last time
+     *   - If not, read all data and return a hard resync (previous data will be wiped)
+     @returns One of the below:
+     *  - `null`: Cache hasn't changed
+     *  - `{ data: Obj[], hash: string, hard: true }`: Cache has changed
+     */
+    async syncAll(
+        trx: AnyTrxNode,
+        lastHash?: string,
+        lastUpdateEpoch = 0
+    ): Promise<null|{
+        sync: BucketCacheSync<Obj>[],
+        hash: string,
+        updateEpoch: number,
+        reset: boolean
+    }> {
+        // 1. Hash the current ids
+        const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
+        const results = await this.guard(sql)`SELECT md5(CAST((array_agg(id ORDER BY id)) AS TEXT)) as hash FROM ${sql(this.tableName)}`;
+        const hash = (results[0] as any).hash;
+
+        // 2. If hash changed, return a reset sync with all objects
+        if (hash !== lastHash) {
+            let updateEpoch = 0;
+            const sync = (await this.index(trx))
+                .map(obj => {
+                    const epoch = this.getUpdateEpoch(obj);
+                    if (epoch > updateEpoch) {
+                        updateEpoch = epoch;
+                    }
+                    return { obj, updateEpoch: epoch };
+                });
+            return {
+                sync,
+                hash,
+                updateEpoch,
+                reset: true
+            };
+        }
+
+        // 3. Find the data that changed and return it
+        const changed = await this.query(trx, {
+            'updated_at >': new NesoiDatetime(lastUpdateEpoch).toISO(),
+            '#order': {
+                by: ['updated_at'],
+                dir: ['desc']
+            }
+        });
+        const updateEpoch = (changed.data[0] as any)?.updated_at || 0;
         
+        if (!changed.data.length) {
+            return null;
+        }
 
-        // // 2. If hash changed, return a reset sync with all objects
-        // if (hash !== lastHash) {
-        //     let updateEpoch = 0;
-        //     const sync = (await this.index(trx) as Obj[])
-        //         .map(obj => {
-        //             const epoch = this.getUpdateEpoch(obj);
-        //             if (epoch > updateEpoch) {
-        //                 updateEpoch = epoch;
-        //             }
-        //             return { obj, updateEpoch: epoch };
-        //         });
-        //     return {
-        //         sync,
-        //         hash,
-        //         updateEpoch,
-        //         reset: true
-        //     };
-        // }
+        const sync = changed.data.map(obj => ({
+            obj: obj as Obj,
+            updateEpoch: NesoiDatetime.fromISO((obj as any).updated_at).epoch
+        }));
 
-        // // 3. Find the data that changed and return it
-        // let updateEpoch = 0;
-        // const sync = (Object.values(this.data) as Obj[])
-        //     .map(obj => {
-        //         const epoch = this.getUpdateEpoch(obj);
-        //         if (epoch > updateEpoch) {
-        //             updateEpoch = epoch;
-        //         }
-        //         return { obj, updateEpoch: epoch };
-        //     })
-        //     .filter(obj => obj.updateEpoch > lastUpdateEpoch);
-        
-        // if (!sync.length) {
-        //     return null;
-        // }
-
-        // return {
-        //     sync,
-        //     hash,
-        //     updateEpoch,
-        //     reset: false
-        // };
+        return {
+            sync,
+            hash,
+            updateEpoch,
+            reset: false
+        };
     }
 
     public static getTableMeta(trx: AnyTrxNode, meta: NQL_QueryMeta) {
