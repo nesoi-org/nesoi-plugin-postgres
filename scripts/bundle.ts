@@ -22,7 +22,7 @@ async function main() {
     await Shell.cmd('.', 'npm run build')
 
     Console.step('(Step 4) Run Unit Tests')
-    await Shell.cmd('.', 'npm run test')
+    await Shell.cmd('.', 'npm run test:ci')
 
     Console.step('(Step 5) Include package.json file on build/');
     const packageJson = path.resolve('.', 'package.json')

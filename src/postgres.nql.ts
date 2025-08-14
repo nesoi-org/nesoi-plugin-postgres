@@ -11,39 +11,35 @@ type Obj = Record<string, any>
 
 export class PostgresNQLRunner extends NQLRunner {
     
-    async run(trx: AnyTrxNode, part: NQL_Part, params: Obj, pagination?: NQL_Pagination, view?: $BucketView) {
+    async run(trx: AnyTrxNode, part: NQL_Part, params: Obj[], pagination?: NQL_Pagination, view?: $BucketView) {
         const { tableName, serviceName, meta } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
         const sql = Trx.get<postgres.Sql<any>>(trx, serviceName+'.sql');
 
         const sql_params: any[] = [];
 
-        const _sql = (part: NQL_Part) => {
-            let where = _union(part.union);
-            if (where) {
-                where = 'WHERE ' + where;
-            }
-            const sql_str = `FROM ${tableName} ${where}`;
-            return sql_str;
-        };
-        const _union = (union: NQL_Union): string => {
+        const _union = (union: NQL_Union, params: Obj): string => {
             const inters = union.inters.map(
-                i => _inter(i)
+                i => _inter(i, params)
             ).filter(r => !!r).join(' OR ');
             if (!inters) return '';
             return `(${inters})`;
         };
-        const _inter = (inter: NQL_Intersection): string => {
+        const _inter = (inter: NQL_Intersection, params: Obj): string => {
             const rules = inter.rules.map(
-                r => (('value' in r) ? _rule(r) : _union(r))
+                r => (('value' in r) ? _rule(r, params) : _union(r, params))
             ).filter(r => !!r).join(' AND ');
             if (!rules) return '';
             return `(${rules})`;
         };
-        const _rule = (rule: NQL_Rule): string => {
+        const _rule = (rule: NQL_Rule, params: Obj): string => {
 
             // Replace '.' of fieldpath with '->' (JSONB compatible)
-            let column = '"' + rule.fieldpath.replace(/\./g, '->') + '"';
-
+            let column = rule.fieldpath.replace(/\.(\w+)$/, '->>\'$1\'');
+            column = column.replace(/\.(\w+)/g, '->\'$1\'');
+            if (!column.includes('->>')) {
+                column = `"${column}"`;
+            } 
+            
             // TODO: handle '.#'
 
             // Special case: "present" operation
@@ -92,7 +88,7 @@ export class PostgresNQLRunner extends NQLRunner {
                 const union = rule.value.subquery.union;
                 const { tableName } = PostgresBucketAdapter.getTableMeta(trx, { bucket} as any);
 
-                value = `SELECT ${select} FROM ${tableName} WHERE ${_union(union)}`;
+                value = `SELECT ${select} FROM ${tableName} WHERE ${_union(union, params)}`;
                 return `${rule.not ? 'NOT ' : ''} ${column} ${op} (${value})`;
             }
 
@@ -104,8 +100,19 @@ export class PostgresNQLRunner extends NQLRunner {
                 value = `%${value}%`;
             }
 
-            sql_params.push(value);
-            return `${rule.not ? 'NOT ' : ''} ${column} ${op} ($${sql_params.length})`;
+            let p;
+            if (Array.isArray(value)) {
+                p = Array.from({ length: value.length }).map((_, i) => 
+                    `$${i + sql_params.length + 1}`
+                ).join(',');
+                sql_params.push(...value);
+            }
+            else {
+                sql_params.push(value);
+                p = `$${sql_params.length}`;
+
+            }
+            return `${rule.not ? 'NOT ' : ''} ${column} ${op} (${p})`;
         };
 
         // Debug
@@ -115,8 +122,15 @@ export class PostgresNQLRunner extends NQLRunner {
         // console.log((str as any).string);
         // End of Debug
 
-        const sql_str = _sql(part);
-
+        const where_set = new Set<string>();
+        for (const paramGroup of params) {
+            const where = _union(part.union, paramGroup);
+            if (where) {
+                where_set.add(where);
+            }
+        }
+        const where = where_set.size ? `WHERE ${[...where_set].join(' OR ')}` : '';
+        const sql_str = `FROM ${tableName} ${where}`;
 
         const order = part.union.order;
         const order_str = `ORDER BY ${order?.by[0] || meta.updated_at} ${order?.dir[0] === 'asc' ? 'ASC' : 'DESC'}`;
