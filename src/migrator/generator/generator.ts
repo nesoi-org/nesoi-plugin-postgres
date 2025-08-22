@@ -268,6 +268,7 @@ export class MigrationGenerator<
             'int': () => 'int4',
             'obj': () => 'jsonb',
             'string': () => 'varchar', // TODO: char() if maxLength
+            'literal': () => 'varchar', // TODO: char() if maxLength
             'list': () => '',
             'union': () => '',
             'unknown': () => { throw new Error('An unknown field shouldn\'t be stored on SQL'); },
@@ -294,6 +295,7 @@ export class MigrationGenerator<
         let type: string = ({
             'bool': () => 'boolean',
             'date': () => 'date',
+            'interval': () => 'interval',
             'timestamp': () => 'timestamp',
             'timestamptz': () => 'timestamp with time zone',
             'timestamp with time zone': () => 'timestamp with time zone',
