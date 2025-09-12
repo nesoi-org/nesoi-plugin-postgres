@@ -92,7 +92,7 @@ export class PostgresNQLRunner extends NQLRunner {
                 const bucket = rule.value.subquery.bucket;
                 const select = rule.value.subquery.select;
                 const union = rule.value.subquery.union;
-                const { tableName } = PostgresBucketAdapter.getTableMeta(trx, { bucket} as any);
+                const { tableName } = PostgresBucketAdapter.getTableMeta(trx, { schema: bucket } as any);
 
                 value = `SELECT ${select} FROM ${tableName} WHERE ${_union(union, params)}`;
                 return `${rule.not ? 'NOT ' : ''} ${column} ${op} (${value})`;
