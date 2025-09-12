@@ -119,7 +119,7 @@ export class cmd_make_empty_migration extends CLICommand {
         const name = $.name || await UI.question('Migration name');
         const migration = $Migration.empty(this.service.name, module, name);
         const filepath = migration.save();
-        this.cli.openEditor(filepath);
+        await this.cli.openEditor(filepath);
     }
 }
 

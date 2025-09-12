@@ -8,7 +8,7 @@ import { AnyTrx, Trx } from 'nesoi/lib/engine/transaction/trx';
 import { TrxEngineWrapFn } from 'nesoi/lib/engine/transaction/trx_engine.config';
 import { Database } from './migrator/database';
 import { PostgresConfig } from './postgres.config';
-import { Service } from 'nesoi/lib/engine/apps/service';
+import { Service } from 'nesoi/lib/engine/app/service';
 
 export class PostgresService<Name extends string = 'pg'>
     extends Service<Name, PostgresConfig | undefined> {

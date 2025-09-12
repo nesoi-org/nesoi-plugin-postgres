@@ -11,6 +11,16 @@ type Obj = Record<string, any>
 
 export class PostgresNQLRunner extends NQLRunner {
     
+    static fieldpathToColumn(fieldpath?: string) {
+        if (!fieldpath) return undefined;
+        let column = fieldpath.replace(/\.(\w+)$/, '->>\'$1\'');
+        column = column.replace(/\.(\w+)/g, '->\'$1\'');
+        if (!column.includes('->>')) {
+            column = `"${column}"`;
+        }
+        return column;
+    }
+
     async run(trx: AnyTrxNode, part: NQL_Part, params: Obj[], pagination?: NQL_Pagination, view?: $BucketView) {
         const { tableName, serviceName, meta } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
         const sql = Trx.get<postgres.Sql<any>>(trx, serviceName+'.sql');
@@ -34,11 +44,7 @@ export class PostgresNQLRunner extends NQLRunner {
         const _rule = (rule: NQL_Rule, params: Obj): string => {
 
             // Replace '.' of fieldpath with '->' (JSONB compatible)
-            let column = rule.fieldpath.replace(/\.(\w+)$/, '->>\'$1\'');
-            column = column.replace(/\.(\w+)/g, '->\'$1\'');
-            if (!column.includes('->>')) {
-                column = `"${column}"`;
-            } 
+            let column = PostgresNQLRunner.fieldpathToColumn(rule.fieldpath)!;
             
             // TODO: handle '.#'
 
@@ -138,7 +144,8 @@ export class PostgresNQLRunner extends NQLRunner {
         const sql_str = `FROM ${tableName} ${where}`;
 
         const order = part.union.order;
-        const order_str = `ORDER BY ${order?.by[0] || meta.updated_at} ${order?.dir[0] === 'asc' ? 'ASC' : 'DESC'}`;
+        const order_by = PostgresNQLRunner.fieldpathToColumn(order?.by[0]);
+        const order_str = `ORDER BY ${order_by || meta.updated_at} ${order?.dir[0] === 'asc' ? 'ASC' : 'DESC'}`;
 
         let limit_str = '';
         if (pagination?.page || pagination?.perPage) {

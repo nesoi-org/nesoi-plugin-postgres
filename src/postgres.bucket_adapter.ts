@@ -417,7 +417,7 @@ export class PostgresBucketAdapter<
     }
 
     public static getTableMeta(trx: AnyTrxNode, meta: NQL_QueryMeta) {
-        const schema = meta.bucket as $Bucket;
+        const schema = meta.schema as $Bucket;
         const trxModule = TrxNode.getModule(trx);
         const bucketName = schema.name;
         const refName = (trxModule.name === schema.module ? '' : `${schema.module}::`) + bucketName;

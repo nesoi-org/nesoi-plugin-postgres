@@ -2,7 +2,7 @@
 import { Mock } from 'nesoi/tools/joaquin/mock';
 import { BucketBuilder } from 'nesoi/lib/elements/entities/bucket/bucket.builder';
 import { Log } from 'nesoi/lib/engine/util/log';
-import { InlineApp } from 'nesoi/lib/engine/apps/inline.app';
+import { InlineApp } from 'nesoi/lib/engine/app/inline.app';
 import { PostgresService } from '../src/postgres.service';
 import { PostgresBucketAdapter } from '../src/postgres.bucket_adapter';
 import { PostgresConfig } from '../src/postgres.config';
@@ -110,7 +110,6 @@ describe('Postgres Bucket Adapter', () => {
                 const BUCKET = trx.bucket('BUCKET');
                 const input = mock.bucket('MODULE', 'BUCKET')
                     .obj({ id: undefined }).raw(daemon);
-                
                 // when
                 const created = await BUCKET.create(input as any);
                 return { input, created };
