@@ -96,7 +96,7 @@ export class MigrationRunner {
         interactive = false
     ) {
         let status = await MigrationRunner.status(daemon, service, dirpath);
-        console.log(status.describe());
+        Log.info('migration_runner' as any, 'up', status.describe());
 
         await this.migrateTrash(daemon, service, status);
 
@@ -127,7 +127,7 @@ export class MigrationRunner {
         });
 
         status = await MigrationRunner.status(daemon, service, dirpath);
-        console.log(status.describe());
+        Log.info('migration_runner' as any, 'up', status.describe());
     }
 
     public static async down(
@@ -137,7 +137,7 @@ export class MigrationRunner {
         dirpath: string = 'migrations'
     ) {
         let status = await MigrationRunner.status(daemon, service, dirpath);
-        console.log(status.describe());
+        Log.info('migration_runner' as any, 'up', status.describe());
 
         const lastBatch = status.items.filter(item => item.batch === status.batch);
         if (!lastBatch.length) {
@@ -165,7 +165,7 @@ export class MigrationRunner {
         });
 
         status = await MigrationRunner.status(daemon, service, dirpath);
-        console.log(status.describe());
+        Log.info('migration_runner' as any, 'up', status.describe());
     }
 
     public static fromSchema = {
@@ -177,7 +177,7 @@ export class MigrationRunner {
             dirpath: string = 'migrations'
         ) => {
             let status = await MigrationRunner.status(daemon, service, dirpath);
-            console.log(status.describe());
+            Log.info('migration_runner' as any, 'up', status.describe());
     
             const routine = new MigrationRoutine({
                 service: service.name,
@@ -207,7 +207,7 @@ export class MigrationRunner {
             });
     
             status = await MigrationRunner.status(daemon, service, dirpath);
-            console.log(status.describe());
+            Log.info('migration_runner' as any, 'up', status.describe());
         }
 
     };
@@ -226,7 +226,7 @@ export class MigrationRunner {
 
             if (name !== 'migrations:v1') {
                 status = await MigrationRunner.status(daemon, service, dirpath);
-                console.log(status.describe());
+                Log.info('migration_runner' as any, 'up', status.describe());
             }
     
             const mig: MigrationRunnerStatus['items'][number] = {
@@ -242,7 +242,7 @@ export class MigrationRunner {
             });
             
             status = await MigrationRunner.status(daemon, service, dirpath);
-            console.log(status.describe());
+            Log.info('migration_runner' as any, 'up', status.describe());
         }
 
     };

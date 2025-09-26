@@ -94,14 +94,15 @@ async function setup() {
 }
 
 const mock = new Mock();
-beforeAll(async () => {
-    await setup();
-}, 30000);
-afterAll(async () => {
-    await daemon.destroy();
-}, 30000);
 
 describe('Postgres Bucket Adapter', () => {
+    
+    beforeAll(async () => {
+        await setup();
+    }, 30000);
+    afterAll(async () => {
+        await daemon.destroy();
+    }, 30000);
 
     describe('CRUD', () => {
         it('create should return unmodified object', async() => {

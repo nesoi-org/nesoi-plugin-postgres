@@ -392,10 +392,7 @@ export class PostgresBucketAdapter<
         // 3. Find the data that changed and return it
         const changed = await this.query(trx, {
             'updated_at >': new NesoiDatetime(lastUpdateEpoch).toISO(),
-            '#order': {
-                by: ['updated_at'],
-                dir: ['desc']
-            }
+            '#sort': 'updated_at@desc'
         });
         const updateEpoch = (changed.data[0] as any)?.updated_at || 0;
         

@@ -79,10 +79,12 @@ export class MigrationGenerator<
         const columns = rawColumns.map(col => ({
             column_name: col.column_name,
             udt_name: col.udt_name,
-            data_type: col.column_name === 'id' ? 'SERIAL PRIMARY KEY' : this.fieldTypeFromUdt(col.udt_name, {
-                n0: col.numeric_precision,
-                n1: col.numeric_scale,
-            }),
+            data_type: (col.column_name === 'id')
+                ? (col.udt_name === 'int4' ? 'SERIAL PRIMARY KEY' : 'bpchar PRIMARY KEY')
+                : this.fieldTypeFromUdt(col.udt_name, {
+                    n0: col.numeric_precision,
+                    n1: col.numeric_scale,
+                }),
             nullable: col.is_nullable === 'YES',
             field_exists: false
         }) as TableColumn);
@@ -315,7 +317,8 @@ export class MigrationGenerator<
 
     private fieldType($: $BucketModelField) {
         if ($.name === 'id') {
-            return 'SERIAL PRIMARY KEY';
+            if ($.type === 'int') return 'SERIAL PRIMARY KEY';
+            else return 'bpchar PRIMARY KEY';
         }
         const udt = this.fieldUdt($);
         return this.fieldTypeFromUdt(udt, {
