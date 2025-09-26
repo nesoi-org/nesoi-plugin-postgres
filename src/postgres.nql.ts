@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-deprecated */
 import { AnyTrxNode } from 'nesoi/lib/engine/transaction/trx_node';
 import { NQLRunner } from 'nesoi/lib/elements/entities/bucket/query/nql_engine';
 import { NQL_Intersection, NQL_Pagination, NQL_Part, NQL_Rule, NQL_Union } from 'nesoi/lib/elements/entities/bucket/query/nql.schema';
@@ -23,7 +24,7 @@ export class PostgresNQLRunner extends NQLRunner {
     }
 
     async run(trx: AnyTrxNode, part: NQL_Part, params: Obj[], param_templates: Record<string, string>[], pagination?: NQL_Pagination, view?: $BucketView) {
-        const { tableName, serviceName, meta } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
+        const { tableName, serviceName } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
         const sql = Trx.get<postgres.Sql<any>>(trx, serviceName+'.sql');
 
         const sql_params: any[] = [];
@@ -58,6 +59,10 @@ export class PostgresNQLRunner extends NQLRunner {
                     return `${column} IS NOT NULL`;
                 }
             }
+
+            if (rule.op === 'contains_any') {
+                throw new Error('Operator \'contains_any\' currently not supported on SQL adapters.');
+            }
             
             // Translate operation
             let op = {
@@ -85,24 +90,24 @@ export class PostgresNQLRunner extends NQLRunner {
             let queryValue;
             if ('static' in rule.value) {
                 queryValue = rule.value.static;
+                if (rule.case_i) queryValue = (queryValue as string).toLowerCase();
             }
             else if ('param' in rule.value) {
                 if (Array.isArray(rule.value.param)) {
-                    // eslint-disable-next-line @typescript-eslint/no-deprecated
                     queryValue = rule.value.param.map(p => Tree.get(params, p));
                 }
                 else {
-                    // eslint-disable-next-line @typescript-eslint/no-deprecated
                     queryValue = Tree.get(params, rule.value.param);
                 }
+                if (rule.case_i) queryValue = (queryValue as string).toLowerCase();
             }
             else if ('param_with_$' in rule.value) {
                 let path = rule.value.param_with_$;
                 for (const key in param_template) {
                     path = path.replace(new RegExp(key.replace('$','\\$'), 'g'), param_template[key]);
                 }
-                // eslint-disable-next-line @typescript-eslint/no-deprecated
                 queryValue = Tree.get(params, path);
+                if (rule.case_i) queryValue = (queryValue as string).toLowerCase();
             }
             else {
                 const bucket = rule.value.subquery.bucket;
@@ -111,6 +116,7 @@ export class PostgresNQLRunner extends NQLRunner {
                 const { tableName } = PostgresBucketAdapter.getTableMeta(trx, { schema: bucket } as any);
 
                 queryValue = `SELECT ${select} FROM ${tableName} WHERE ${_union(union, params, param_template)}`;
+                if (rule.case_i) queryValue = `LOWER(${queryValue})`;
                 return `${rule.not ? 'NOT ' : ''} ${column} ${op} (${queryValue})`;
             }
 
@@ -124,6 +130,8 @@ export class PostgresNQLRunner extends NQLRunner {
 
             let p;
             if (Array.isArray(queryValue)) {
+                if (queryValue.length === 0) return rule.not ? 'TRUE' : 'FALSE';
+
                 p = Array.from({ length: queryValue.length }).map((_, i) => 
                     `$${i + sql_params.length + 1}`
                 ).join(',');
@@ -162,18 +170,15 @@ export class PostgresNQLRunner extends NQLRunner {
         const sql_str = `FROM ${tableName} ${where}`;
 
         const sort = part.union.sort;
-        let order_str;
-        if (!sort?.length) {
-            order_str = `ORDER BY ${meta.updated_at} DESC`;
-        }
-        else {
+        let order_str = '';
+        if (sort?.length) {
             order_str = 'ORDER BY ' + sort.map(s =>
                 `${PostgresNQLRunner.fieldpathToColumn(s.key)} ${s.dir === 'asc' ? 'ASC' : 'DESC'}`
             ).join(',');
         }
         
         let limit_str = '';
-        if (pagination?.page || pagination?.perPage) {
+        if (pagination?.page !== undefined || pagination?.perPage !== undefined) {
             const limit = pagination.perPage ?? 10;
             const offset = ((pagination.page || 1)-1)*limit;
             limit_str = `OFFSET ${offset} LIMIT ${limit}`;

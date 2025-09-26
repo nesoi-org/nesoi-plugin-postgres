@@ -15,7 +15,7 @@ import { NesoiDatetime } from 'nesoi/lib/engine/data/datetime';
 Log.level = 'warn';
 
 // TODO: read this from env
-const PostgresConfig: PostgresConfig = {
+const PostgresConfig = (): PostgresConfig => ({
     meta: {
         created_at: 'created_at',
         created_by: 'created_by',
@@ -29,7 +29,7 @@ const PostgresConfig: PostgresConfig = {
         pass: 'postgres',
         db: 'NESOI_TEST',
     }
-};
+});
 
 let daemon: AnyDaemon;
 async function setup() {
@@ -81,7 +81,7 @@ async function setup() {
     // Prepare database using daemon
     // TODO: encapsulate this
 
-    await Database.createDatabase('NESOI_TEST', PostgresConfig.connection, { if_exists: 'delete' });
+    await Database.createDatabase('NESOI_TEST', PostgresConfig().connection, { if_exists: 'delete' });
 
     const migrator = await MigrationProvider.create(daemon, pg);
     const migration = await migrator.generateForBucket('MODULE', 'BUCKET', 'nesoi_test_table');
