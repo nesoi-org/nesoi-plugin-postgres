@@ -29,6 +29,14 @@ export class PostgresNQLRunner extends NQLRunner {
 
         const sql_params: any[] = [];
 
+        const _param = (value: number | string | boolean) => {
+            const i = sql_params.findIndex(v => v === value);
+            if (i < 0) {
+                sql_params.push(value);
+                return `$${sql_params.length}`;
+            }
+            return `$${i+1}`;
+        };
         const _union = (union: NQL_Union, params: Obj, param_template: Record<string, string>): string => {
             const inters = union.inters.map(
                 i => _inter(i, params, param_template)
@@ -132,14 +140,10 @@ export class PostgresNQLRunner extends NQLRunner {
             if (Array.isArray(queryValue)) {
                 if (queryValue.length === 0) return rule.not ? 'TRUE' : 'FALSE';
 
-                p = Array.from({ length: queryValue.length }).map((_, i) => 
-                    `$${i + sql_params.length + 1}`
-                ).join(',');
-                sql_params.push(...queryValue);
+                p = queryValue.map(v => _param(v)).join(',');
             }
             else {
-                sql_params.push(queryValue);
-                p = `$${sql_params.length}`;
+                p = _param(queryValue);
 
             }
             return `${rule.not ? 'NOT ' : ''} ${column} ${op} (${p})`;
@@ -153,7 +157,7 @@ export class PostgresNQLRunner extends NQLRunner {
         // End of Debug
 
         const param_ids = new Set<string>();
-        const wheres: string[] = [];
+        const wheres = new Set<string>();
         for (const param of params) {
             if ('id' in param) {
                 if (param_ids.has(param.id)) continue;
@@ -162,11 +166,11 @@ export class PostgresNQLRunner extends NQLRunner {
             for (const param_template of param_templates) {
                 const where = _union(part.union, param, param_template);
                 if (where) {
-                    wheres.push(where);
+                    wheres.add(where);
                 }
             }
         }
-        const where = wheres.length ? `WHERE ${wheres.join(' OR ')}` : '';
+        const where = wheres.size ? `WHERE ${[...wheres].join(' OR ')}` : '';
         const sql_str = `FROM ${tableName} ${where}`;
 
         const sort = part.union.sort;
