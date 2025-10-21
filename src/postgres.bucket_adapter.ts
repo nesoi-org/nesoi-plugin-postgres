@@ -258,6 +258,7 @@ export class PostgresBucketAdapter<
         trx: AnyTrxNode,
         ids: Obj['id'][]
     ) {
+        if (!ids.length) return;
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
         await this.guard(sql)`
             DELETE FROM ${sql(this.tableName)}
