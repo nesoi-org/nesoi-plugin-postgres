@@ -49,7 +49,8 @@ export class MigrationRunner {
         // Extract migration routine of each file
 
         const migrationFiles: MigrationFile[] = [];
-        for (const file of files) {
+        const sortedFiles = files.sort((a,b) => a.name.localeCompare(b.name));
+        for (const file of sortedFiles) {
             const { default: routine } = await import(file.path);
             if (routine instanceof MigrationRoutine) {
                 const name = file.name.replace(/'.[t|j]s'/,'');

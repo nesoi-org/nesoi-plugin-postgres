@@ -1,6 +1,6 @@
 {
   "name": "@nesoi/plugin-postgres",
-  "version": "3.3.6",
+  "version": "3.3.7",
   "description": "PostgreSQL plugin for the nesoi framework",
   "main": "index.js",
   "scripts": {
