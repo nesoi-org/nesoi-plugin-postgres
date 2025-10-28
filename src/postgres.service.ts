@@ -95,18 +95,30 @@ export class PostgresService<Name extends string = 'pg'>
                 Trx.set(trx.root, service+'.sql', postgres);
                 return Promise.resolve();
             }
-            return new Promise<void>(wrap_resolve => {
-                void postgres.begin(sql => new Promise<void>((resolve, reject) => {
-                    services[service].transactions[trx.id] = {
-                        sql, commit: resolve, rollback: reject
-                    };
-                    Trx.set(trx.root, service+'.sql', sql);
-                    Trx.set(trx.root, service+'.commit', resolve);
-                    Trx.set(trx.root, service+'.rollback', reject);
-                    wrap_resolve();
-                })).catch(() => {
-                    Log.warn('service', 'postgres', `Transaction ${trx.id} rolled back on database`);
-                });
+            return new Promise<void>((wrap_resolve, wrap_reject) => {
+                try {
+                    void postgres.begin(sql => new Promise<void>((resolve, reject) => {
+                        services[service].transactions[trx.id] = {
+                            sql, commit: resolve, rollback: reject
+                        };
+                        Trx.set(trx.root, service+'.sql', sql);
+                        Trx.set(trx.root, service+'.commit', resolve);
+                        Trx.set(trx.root, service+'.rollback', reject);
+                        wrap_resolve();
+                    })).then(
+                        () => {
+                            services[service].transactions[trx.id].finish_ok();
+                        },
+                        () => {
+                            Log.warn('service', 'postgres', `Transaction ${trx.id} rolled back on database`);
+                            services[service].transactions[trx.id].finish_error();
+                        }
+                    );
+                }
+                catch (e: any) {
+                    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+                    wrap_reject(e);
+                }
             });
         };
         const _continue = (trx: AnyTrx, services: Record<string, any>) => {
@@ -126,20 +138,52 @@ export class PostgresService<Name extends string = 'pg'>
             return Promise.resolve();
         };
         const commit = (trx: AnyTrx, services: Record<string, any>) => {
-            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-            delete services[service].transactions[trx.id];
-            if (trx.idempotent) return Promise.resolve();
+            if (trx.idempotent) {
+                // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                delete services[service].transactions[trx.id];
+                return Promise.resolve();
+            }
+            
             const commit = Trx.get(trx.root, service+'.commit');
-            (commit as any)();
-            return Promise.resolve();
+            return new Promise<void>((resolve, reject) => {
+                const finish_ok = () => {
+                    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                    delete services[service].transactions[trx.id];
+                    resolve();
+                };
+                const finish_error = () => {
+                    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                    delete services[service].transactions[trx.id];
+                    reject(new Error(`Failed to commit transaction ${trx.id}`));
+                };
+                services[service].transactions[trx.id].finish_ok = finish_ok;
+                services[service].transactions[trx.id].finish_error = finish_error;
+                (commit as any)();
+            });
         };
         const rollback = (trx: AnyTrx, services: Record<string, any>) => {
-            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-            delete services[service].transactions[trx.id];
-            if (trx.idempotent) return Promise.resolve();
+            if (trx.idempotent) {
+                // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                delete services[service].transactions[trx.id];
+                return Promise.resolve();
+            }
+
             const rollback = Trx.get(trx.root, service+'.rollback');
-            (rollback as any)();
-            return Promise.resolve();
+            return new Promise<void>((resolve, reject) => {
+                const finish_ok = () => {
+                    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                    delete services[service].transactions[trx.id];
+                    reject(new Error(`Failed to rollback transaction ${trx.id}`));
+                };
+                const finish_error = () => {
+                    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                    delete services[service].transactions[trx.id];
+                    resolve();
+                };
+                services[service].transactions[trx.id].finish_ok = finish_ok;
+                services[service].transactions[trx.id].finish_error = finish_error;
+                (rollback as any)();
+            });
         };
         return { begin, continue: _continue, commit, rollback };
     }
