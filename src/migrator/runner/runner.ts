@@ -306,6 +306,11 @@ export class MigrationRunner {
         }
         
         const status = await daemon.trx(migration.module)
+
+            // We don't want the trx to call sql.begin, given it was called
+            // by the migrator itself.
+            .idempotent
+            
             .run(async trx => {
                 Trx.set(trx, serviceName+'.sql', sql);
                 await migration.routine!.up({

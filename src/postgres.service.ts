@@ -80,7 +80,12 @@ export class PostgresService<Name extends string = 'pg'>
     }
     
     async down() {
-        await this.sql.end();
+        try {
+            await this.sql.end();
+        }
+        catch (e: any) {
+            Log.warn('service', 'postgres', e.toString());
+        }
     }
 
     public static wrap(service: string) {
@@ -91,15 +96,17 @@ export class PostgresService<Name extends string = 'pg'>
                 return Promise.resolve();
             }
             return new Promise<void>(wrap_resolve => {
-                void postgres.begin(sql => new Promise<void>((commit, rollback) => {
+                void postgres.begin(sql => new Promise<void>((resolve, reject) => {
                     services[service].transactions[trx.id] = {
-                        sql, commit, rollback
+                        sql, commit: resolve, rollback: reject
                     };
                     Trx.set(trx.root, service+'.sql', sql);
-                    Trx.set(trx.root, service+'.commit', commit);
-                    Trx.set(trx.root, service+'.rollback', rollback);
+                    Trx.set(trx.root, service+'.commit', resolve);
+                    Trx.set(trx.root, service+'.rollback', reject);
                     wrap_resolve();
-                }));
+                })).catch(() => {
+                    Log.warn('service', 'postgres', `Transaction ${trx.id} rolled back on database`);
+                });
             });
         };
         const _continue = (trx: AnyTrx, services: Record<string, any>) => {
