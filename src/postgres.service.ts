@@ -5,7 +5,6 @@ import { NesoiDatetime } from 'nesoi/lib/engine/data/datetime';
 import { NesoiDecimal } from 'nesoi/lib/engine/data/decimal';
 import { PostgresNQLRunner } from './postgres.nql';
 import { AnyTrx, Trx } from 'nesoi/lib/engine/transaction/trx';
-import { TrxEngineWrapFn } from 'nesoi/lib/engine/transaction/trx_engine.config';
 import { Database } from './migrator/database';
 import { PostgresConfig } from './postgres.config';
 import { Service } from 'nesoi/lib/engine/app/service';
@@ -22,6 +21,12 @@ export class PostgresService<Name extends string = 'pg'>
 
     public sql!: postgres.Sql<any>;
     public nql!: PostgresNQLRunner;
+
+    private transactions: Record<string, {
+        sql: postgres.Sql,
+        commit: () => void,
+        rollback: () => void,
+    }> = {};
 
     up() {
         Log.info('service' as any, 'postgres', 'Connecting to Postgres database');
@@ -79,19 +84,56 @@ export class PostgresService<Name extends string = 'pg'>
     }
 
     public static wrap(service: string) {
-        const chain = (service: string, __fn?: (...args: any) => any) => {
-            const base = (trx: AnyTrx, fn: TrxEngineWrapFn<any, any>, services: Record<string, any>) => {
-                const postgres = services[service].sql as postgres.Sql<any>;
-                return postgres.begin(sql => {
+        const begin = (trx: AnyTrx, services: Record<string, any>) => {
+            const postgres = services[service].sql as postgres.Sql<any>;
+            if (trx.idempotent) {
+                Trx.set(trx.root, service+'.sql', postgres);
+                return Promise.resolve();
+            }
+            return new Promise<void>(wrap_resolve => {
+                void postgres.begin(sql => new Promise<void>((commit, rollback) => {
+                    services[service].transactions[trx.id] = {
+                        sql, commit, rollback
+                    };
                     Trx.set(trx.root, service+'.sql', sql);
-                    if (__fn) return __fn(trx, fn, services);
-                    return fn(trx.root);
-                });
-            };
-            base.and = (service: string) => chain(service, base);
-            return base;
+                    Trx.set(trx.root, service+'.commit', commit);
+                    Trx.set(trx.root, service+'.rollback', rollback);
+                    wrap_resolve();
+                }));
+            });
         };
-        return chain(service);
-    }
+        const _continue = (trx: AnyTrx, services: Record<string, any>) => {
+            const postgres = services[service].sql as postgres.Sql<any>;
+            if (trx.idempotent) {
+                Trx.set(trx.root, service+'.sql', postgres);
+                return Promise.resolve();
+            }
+            const transaction = services[service].transactions[trx.id];
+            if (!transaction) {
+                throw new Error(`Failed to continue transaction ${trx.id}. Runner no longer avialable.`);
+            }
 
+            Trx.set(trx.root, service+'.sql', transaction.sql);
+            Trx.set(trx.root, service+'.commit', transaction.commit);
+            Trx.set(trx.root, service+'.rollback', transaction.rollback);
+            return Promise.resolve();
+        };
+        const commit = (trx: AnyTrx, services: Record<string, any>) => {
+            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+            delete services[service].transactions[trx.id];
+            if (trx.idempotent) return Promise.resolve();
+            const commit = Trx.get(trx.root, service+'.commit');
+            (commit as any)();
+            return Promise.resolve();
+        };
+        const rollback = (trx: AnyTrx, services: Record<string, any>) => {
+            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+            delete services[service].transactions[trx.id];
+            if (trx.idempotent) return Promise.resolve();
+            const rollback = Trx.get(trx.root, service+'.rollback');
+            (rollback as any)();
+            return Promise.resolve();
+        };
+        return { begin, continue: _continue, commit, rollback };
+    }
 }

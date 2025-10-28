@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-deprecated */
-import { AnyTrxNode } from 'nesoi/lib/engine/transaction/trx_node';
+import { AnyTrxNode, TrxNode } from 'nesoi/lib/engine/transaction/trx_node';
 import { NQLRunner } from 'nesoi/lib/elements/entities/bucket/query/nql_engine';
 import { NQL_Intersection, NQL_Pagination, NQL_Part, NQL_Rule, NQL_Union } from 'nesoi/lib/elements/entities/bucket/query/nql.schema';
 import postgres from 'postgres';
@@ -25,7 +25,10 @@ export class PostgresNQLRunner extends NQLRunner {
 
     async run(trx: AnyTrxNode, part: NQL_Part, params: Obj[], param_templates: Record<string, string>[], pagination?: NQL_Pagination, view?: $BucketView) {
         const { tableName, serviceName } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
-        const sql = Trx.get<postgres.Sql<any>>(trx, serviceName+'.sql');
+        const sql = Trx.get<postgres.Sql<any>|undefined>(trx, serviceName+'.sql');
+        if (!sql) {
+            throw new Error(`Unable to find sql runner for PostgresService '${serviceName}' at module '${TrxNode.getModule(trx).name}'. Did you configure 'trx.wrap' for this module on the app?`);
+        }
 
         const sql_params: any[] = [];
 

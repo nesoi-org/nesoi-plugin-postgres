@@ -71,7 +71,7 @@ async function setup() {
                 }
             },
             trx: {
-                wrap: PostgresService.wrap('pg')
+                wrap: [PostgresService.wrap('pg')]
             }
         });
     
