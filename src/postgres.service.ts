@@ -118,6 +118,7 @@ export class PostgresService<Name extends string = 'pg'>
                     // If it's a nesoi transaction that already started a db transaction on this service,
                     // we must not create/commit/rollback a new db transaction
                     if (trx.id in trxs) {
+                        Trx.set(trx.root, service+'.sql', trxs[trx.id]!.sql);
                         wrap_resolve();
                         return;
                     }
@@ -154,7 +155,6 @@ export class PostgresService<Name extends string = 'pg'>
                                 if (!trxs[trx.id]?.finish_rollback) {
                                     throw new Error(`Failed to finish PostgreSQL transaction ${trx.id}. The finish_rollback callback is not available. This might mean the PostgreSQL transaction was already commited/rolledback.`);
                                 }
-                                Log.warn('service', 'postgres', `Transaction ${trx.id} rolledback on PostgreSQL service ${service}`);
                                 trxs[trx.id]?.finish_rollback!();
                             }
                         );
