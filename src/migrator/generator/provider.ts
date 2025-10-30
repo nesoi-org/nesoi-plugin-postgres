@@ -23,13 +23,13 @@ export class MigrationProvider<
     
     private constructor(
         protected daemon: AnyDaemon,
-        private service: PostgresService,
+        private service: PostgresService<string>,
         public dirpath = './migrations'
     ) {}
 
     static async create(
         daemon: AnyDaemon,
-        service: PostgresService
+        service: PostgresService<string>
     ) {
         const provider = new MigrationProvider(daemon, service);
 

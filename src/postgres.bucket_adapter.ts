@@ -17,7 +17,7 @@ export class PostgresBucketAdapter<
 
     constructor(
         public schema: $,
-        public service: PostgresService,
+        public service: PostgresService<string>,
         public tableName: string
     ) {
         super(schema, service.nql, service.config);

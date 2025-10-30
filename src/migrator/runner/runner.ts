@@ -21,7 +21,7 @@ export class MigrationRunner {
     
     // Scan (to generate status)
 
-    private static async scanFiles(daemon: AnyDaemon, service: PostgresService, migrations_dir: string) {
+    private static async scanFiles(daemon: AnyDaemon, service: PostgresService<string>, migrations_dir: string) {
 
         const modules = Daemon.getModules(daemon);
         
@@ -79,7 +79,7 @@ export class MigrationRunner {
 
     public static async status(
         daemon: AnyDaemon,
-        service: PostgresService,
+        service: PostgresService<string>,
         migrations_dir: string
     ) {
         const migrationFiles = await MigrationRunner.scanFiles(daemon, service, migrations_dir);
@@ -91,7 +91,7 @@ export class MigrationRunner {
 
     public static async up(
         daemon: AnyDaemon,
-        service: PostgresService,
+        service: PostgresService<string>,
         mode: 'one' | 'batch' = 'one',
         dirpath: string = 'migrations',
         interactive = false
@@ -173,7 +173,7 @@ export class MigrationRunner {
 
         up: async (
             daemon: AnyDaemon,
-            service: PostgresService,
+            service: PostgresService<string>,
             migration: $Migration,
             dirpath: string = 'migrations'
         ) => {
@@ -217,7 +217,7 @@ export class MigrationRunner {
 
         up: async (
             daemon: AnyDaemon,
-            service: PostgresService,
+            service: PostgresService<string>,
             module: string,
             name: string,
             routine: MigrationRoutine,
@@ -252,7 +252,7 @@ export class MigrationRunner {
 
     private static async migrateTrash(
         daemon: AnyDaemon,
-        service: PostgresService,
+        service: PostgresService<string>,
         status: MigrationRunnerStatus
     ) {
         const modules = Daemon.getModules(daemon);
@@ -309,7 +309,7 @@ export class MigrationRunner {
 
             // We don't want the trx to call sql.begin, given it was called
             // by the migrator itself.
-            .idempotent
+            .idempotent()
             
             .run(async trx => {
                 Trx.set(trx, serviceName+'.sql', sql);

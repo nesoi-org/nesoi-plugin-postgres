@@ -31,7 +31,7 @@ export class MigrationGenerator<
         ModuleName extends NoInfer<keyof S['modules']>
     >(
         daemon: AnyDaemon,
-        service: PostgresService,
+        service: PostgresService<string>,
         moduleName: ModuleName,
         bucketName: NoInfer<keyof S['modules'][ModuleName]['buckets']>,
         tableName: string
@@ -44,7 +44,7 @@ export class MigrationGenerator<
     }
 
     constructor(
-        private service: PostgresService,
+        private service: PostgresService<string>,
         private module: Module<any, $Module & { name: ModuleName }>,
         protected schema: $Bucket,
         protected config: BucketAdapterConfig,
