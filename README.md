@@ -1,11 +1,11 @@
-# @nesoi/postgres
+# @nesoi/plugin-postgres
 
 [PostgreSQL](https://www.postgresql.org/) plugin for the [nesoi](https://github.com/nesoi-org/nesoi) framwork, built with [Postgres.js](https://github.com/porsager/postgres).
 
 ## Install
 
 ```
-npm i @nesoi/postgres
+npm i @nesoi/plugin-postgres
 ```
 
 ## Usage

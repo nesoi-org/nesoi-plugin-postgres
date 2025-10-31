@@ -1,2 +1,2 @@
-# @nesoi/postgres
+# @nesoi/plugin-postgres
 

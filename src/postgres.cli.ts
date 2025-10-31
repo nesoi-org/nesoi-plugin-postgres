@@ -130,14 +130,14 @@ export class cmd_make_migrations extends CLICommand {
         super(
             'any',
             'make migrations',
-            'make migrations( TAG)',
+            'make migrations( TAG)(!)',
             'Generate migrations for the bucket(s) using PostgresBucketAdapter',
-            /(\w*)/,
-            ['tag']
+            /(\w*)(!)?/,
+            ['tag','dont_ask']
         );
     }
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async run(daemon: AnyDaemon, $: { tag: string }) {
+     
+    async run(daemon: AnyDaemon, $: { tag: string, dont_ask?:'!' }) {
         console.clear();
         // TODO: restrict by tag
 
@@ -148,7 +148,7 @@ export class cmd_make_migrations extends CLICommand {
             migration.save();
         }
         
-        await MigrationRunner.up(daemon, this.service, 'batch', undefined, true);
+        await MigrationRunner.up(daemon, this.service, 'batch', undefined, !$.dont_ask);
     }
 }
 
@@ -160,12 +160,14 @@ export class cmd_migrate_up extends CLICommand {
             'any',
             'migrate up',
             'migrate up',
-            'Run ALL the pending migrations up (batch)'
+            'Run ALL the pending migrations up (batch)',
+            /(!)?/,
+            ['dont_ask']
         );
     }
-    async run(daemon: AnyDaemon) {
+    async run(daemon: AnyDaemon, $: { dont_ask?:'!' }) {
         console.clear();
-        await MigrationRunner.up(daemon, this.service, 'batch', undefined, true);        
+        await MigrationRunner.up(daemon, this.service, 'batch', undefined, !$.dont_ask);        
     }
 }
 
@@ -177,12 +179,14 @@ export class cmd_migrate_one_up extends CLICommand {
             'any',
             'migrate one up',
             'migrate one up',
-            'Run ONE pending migration up'
+            'Run ONE pending migration up',
+            /(!)?/,
+            ['dont_ask']
         );
     }
-    async run(daemon: AnyDaemon) {
+    async run(daemon: AnyDaemon, $: { dont_ask?: '!' }) {
         console.clear();
-        await MigrationRunner.up(daemon, this.service, 'one', undefined, true);        
+        await MigrationRunner.up(daemon, this.service, 'one', undefined, !$.dont_ask);        
     }
 }
 
@@ -193,13 +197,15 @@ export class cmd_migrate_down extends CLICommand {
         super(
             'any',
             'migrate down',
-            'migrate down',
-            'Rollback the last batch of migrations'
+            'migrate down(!)',
+            'Rollback the last batch of migrations',
+            /(!)?/,
+            ['dont_ask']
         );
     }
-    async run(daemon: AnyDaemon) {
+    async run(daemon: AnyDaemon, $: { dont_ask?: '!' }) {
         console.clear();
-        await MigrationRunner.down(daemon, this.service, 'batch');        
+        await MigrationRunner.down(daemon, this.service, 'batch', undefined, !$.dont_ask);        
     }
 }
 
@@ -210,13 +216,15 @@ export class cmd_migrate_one_down extends CLICommand {
         super(
             'any',
             'migrate one down',
-            'migrate one down',
-            'Rollback the last migration'
+            'migrate one down(!)',
+            'Rollback the last migration',
+            /(!)?/,
+            ['dont_ask']
         );
     }
-    async run(daemon: AnyDaemon) {
+    async run(daemon: AnyDaemon, $: { dont_ask?: '!' }) {
         console.clear();
-        await MigrationRunner.down(daemon, this.service, 'one');        
+        await MigrationRunner.down(daemon, this.service, 'one', undefined, !$.dont_ask);        
     }
 }
 

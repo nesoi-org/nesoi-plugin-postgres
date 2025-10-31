@@ -135,7 +135,8 @@ export class MigrationRunner {
         daemon: AnyDaemon,
         service: PostgresService,
         mode: 'one' | 'batch' = 'one',
-        dirpath: string = 'migrations'
+        dirpath: string = 'migrations',
+        interactive = false
     ) {
         let status = await MigrationRunner.status(daemon, service, dirpath);
         Log.info('migration_runner' as any, 'up', status.describe());
@@ -146,10 +147,12 @@ export class MigrationRunner {
             return;
         }
 
-        const n = mode === 'one' ? 'one' : 'last batch of';
-        const confirm = await UI.yesOrNo(`Rollback ${colored(n, 'green')} migration(s) ${colored('▼ DOWN', 'red')}?`);
-        if (!confirm) {
-            return;
+        if (interactive) {
+            const n = (mode === 'one' ? 1 : lastBatch.length).toString();
+            const confirm = await UI.yesOrNo(`Rollback ${colored(n, 'green')} migration(s) ${colored('▼ DOWN', 'red')}?`);
+            if (!confirm) {
+                return;
+            }
         }
         
         await service.sql.begin(async sql => {
