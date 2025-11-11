@@ -285,7 +285,7 @@ export class PostgresBucketAdapter<
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
         await this.guard(sql)`
             DELETE FROM ${sql(this.tableName)}
-            WHERE id IN ${ ids }
+            WHERE id IN ${sql(ids as (number|string)[])}
         `;
     }
 
