@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/prefer-promise-reject-errors */
 /* eslint-disable @typescript-eslint/no-dynamic-delete */
 import { Log } from 'nesoi/lib/engine/util/log';
 import postgres from 'postgres';
@@ -9,6 +10,7 @@ import { AnyTrx, Trx } from 'nesoi/lib/engine/transaction/trx';
 import { Database } from './migrator/database';
 import { PostgresConfig } from './postgres.config';
 import { Service } from 'nesoi/lib/engine/app/service';
+import { AnyModule } from 'nesoi/lib/engine/module';
 
 export class PostgresService<Name extends string = 'pg'>
     extends Service<Name, PostgresConfig | undefined> {
@@ -25,7 +27,7 @@ export class PostgresService<Name extends string = 'pg'>
 
     private transactions: {
         [x in string]?: {
-            root_id: string
+            begin_module: string
             state: 'open'|'ok'|'error'
             sql: postgres.Sql,
             commit: () => void,
@@ -126,10 +128,11 @@ export class PostgresService<Name extends string = 'pg'>
                     // If it's an unseen nesoi transaction, start a new db transaction
                     void postgres.begin(sql => new Promise<void>((resolve, reject) => {
                         
+                        const module = (trx as any).module as AnyModule;
                         // Register the SQL runner and commit/rollback callbacks
                         // for the db transaction associated with the nesoi transaction
                         trxs[trx.id] = {
-                            root_id: trx.root.id,
+                            begin_module: module.name,
                             state: 'open',
                             sql,
                             commit: resolve,
@@ -140,20 +143,20 @@ export class PostgresService<Name extends string = 'pg'>
                         Trx.set(trx.root, service+'.sql', sql);
 
                         // Begin is done
-                        Log.info('service', 'postgres', `Transaction ${trx.id} started on PostgreSQL service ${service}`);
+                        Log.info('service', 'postgres', `Transaction ${trx.root.globalId} started on PostgreSQL service ${service}`);
                         wrap_resolve();
                     }))
                     // The db transaction commit/rollback callbacks triggers the sections below when called.
                         .then(
                             () => {
                                 if (!trxs[trx.id]?.finish_commit) {
-                                    throw new Error(`Failed to finish PostgreSQL transaction ${trx.id}. The finish_commit callback is not available. This might mean the PostgreSQL transaction was already commited/rolledback.`);
+                                    throw new Error(`Failed to finish PostgreSQL transaction ${trx.root.globalId}. The finish_commit callback is not available. This might mean the PostgreSQL transaction was already commited/rolledback.`);
                                 }
                                 trxs[trx.id]?.finish_commit!();
                             },
                             () => {
                                 if (!trxs[trx.id]?.finish_rollback) {
-                                    throw new Error(`Failed to finish PostgreSQL transaction ${trx.id}. The finish_rollback callback is not available. This might mean the PostgreSQL transaction was already commited/rolledback.`);
+                                    throw new Error(`Failed to finish PostgreSQL transaction ${trx.root.globalId}. The finish_rollback callback is not available. This might mean the PostgreSQL transaction was already commited/rolledback.`);
                                 }
                                 trxs[trx.id]?.finish_rollback!();
                             }
@@ -161,7 +164,6 @@ export class PostgresService<Name extends string = 'pg'>
                 }
                 catch (e: any) {
                     // Begin failed
-                    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
                     wrap_reject(e);
                 }
             });
@@ -169,7 +171,7 @@ export class PostgresService<Name extends string = 'pg'>
 
         /*
             Called on:
-            - Continue*: an idempotent transaction was requested for the engine with a specific id,
+            - Begin/Continue*: an idempotent transaction was requested for the engine with a specific id,
             which didn't previously exist.
             - Continue: an ongoing nesoi transaction was requested for the engine,
             either because of an external transaction on the same module,
@@ -186,7 +188,7 @@ export class PostgresService<Name extends string = 'pg'>
 
             const transaction = services[service].transactions[trx.id];
             if (!transaction) {
-                throw new Error(`Failed to continue transaction ${trx.id}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
+                throw new Error(`Failed to continue transaction ${trx.root.globalId}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
             }
 
             // Expose the db transaction SQL runner for the transaction nodes
@@ -208,20 +210,33 @@ export class PostgresService<Name extends string = 'pg'>
             
             const transaction = services[service].transactions[trx.id];
             if (!transaction) {
-                throw new Error(`Failed to commit transaction ${trx.id}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
+                throw new Error(`Critical: Failed to commit transaction ${trx.root.globalId}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
             }
 
-            // 1 nesoi transaction can be associated with N db transactions
-            // Due to this, we must only commit once and then delete it at the root commit
-            // (which is guaranteed to happen after the children commits)
+            const clearRegistry = () => {
+                // We must only delete the the database transaction from the dictionary
+                // if this nesoi transaction is the original issuer, to guarantee
+                // it won't be deleted ahead of time.
+                const module = (trx as any).module as AnyModule;
+                if (module.name === transaction.begin_module) {
+                    delete services[service].transactions[trx.id];
+                    Log.debug('service', 'postgres', `Transaction ${trx.root.globalId} on PostgreSQL service ${service} finished, removed from registry.`);
+                }
+            };
+
+            // Multiple nesoi transactions can share the same ID (on different modules),
+            // if they also use the same service this would trigger a commit twice.
+            // Due to this, we only commit once.
 
             switch (transaction.state) {
             case 'open':
                 break;
             case 'ok':
+                Log.debug('service', 'postgres', `Attempt to commit transaction ${trx.root.globalId} on PostgreSQL service ${service} skipped, already commited.`);
+                clearRegistry();
                 return Promise.resolve();
             case 'error':
-                throw new Error(`Failed to commit transaction ${trx.id}. PostgreSQL transaction previously rolledback.`);
+                throw new Error(`Critical: Failed to commit transaction ${trx.root.globalId}. PostgreSQL transaction previously rolledback.`);
             }
             transaction.state = 'ok';
 
@@ -232,15 +247,13 @@ export class PostgresService<Name extends string = 'pg'>
 
             return new Promise<void>((resolve, reject) => {
                 const ok = () => {
-                    if (trx.root.id === transaction.root_id) {
-                        delete services[service].transactions[trx.id];
-                    }
-                    Log.info('service', 'postgres', `Transaction ${trx.id} commited on PostgreSQL service ${service}`);
+                    Log.info('service', 'postgres', `Transaction ${trx.root.globalId} commited on PostgreSQL service ${service}`);
+                    clearRegistry();
                     resolve();
                 };
                 const error = () => {
                     delete services[service].transactions[trx.id];
-                    reject(new Error(`Failed to commit transaction ${trx.id}`));
+                    reject(new Error(`Critical: Failed to commit transaction ${trx.root.globalId}`));
                 };
                 transaction.finish_commit = ok;
                 transaction.finish_rollback = error;
@@ -262,22 +275,35 @@ export class PostgresService<Name extends string = 'pg'>
 
             const transaction = services[service].transactions[trx.id];
             if (!transaction) {
-                throw new Error(`Failed to rollback transaction ${trx.id}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
+                throw new Error(`Critical: Failed to rollback transaction ${trx.root.globalId}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
             }
 
-            // 1 nesoi transaction can be associated with N db transactions
-            // Due to this, we must only rollback once and then delete it at the root rollback
-            // (which is guaranteed to happen after the children rollbacks)
+            const clearRegistry = () => {
+                // We must only delete the the database transaction from the dictionary
+                // if this nesoi transaction is the original issuer, to guarantee
+                // it won't be deleted ahead of time.
+                const module = (trx as any).module as AnyModule;
+                if (module.name === transaction.begin_module) {
+                    delete services[service].transactions[trx.id];
+                    Log.debug('service', 'postgres', `Transaction ${trx.root.globalId} on PostgreSQL service ${service} finished, removed from registry.`);
+                }
+            };
+
+            // Multiple nesoi transactions can share the same ID (on different modules),
+            // if they also use the same service this would trigger a rollback twice.
+            // Due to this, we only rollback once.
 
             switch (transaction.state) {
             case 'open':
                 break;
             case 'ok':
-                return Promise.resolve();
+                throw new Error(`Critical: Failed to rollback transaction ${trx.root.globalId}. PostgreSQL transaction previously commited.`);
             case 'error':
-                throw new Error(`Failed to commit transaction ${trx.id}. PostgreSQL transaction previously rolledback.`);
+                Log.debug('service', 'postgres', `Attempt to commit transaction ${trx.root.globalId} on PostgreSQL service ${service} skipped, already rolled back.`);
+                clearRegistry();
+                return Promise.resolve();
             }
-            transaction.state = 'ok';
+            transaction.state = 'error';
 
             // The rollback is only finished after the `.begin` method rejects,
             // so we register the `finish` callbacks, trigger a rollback and
@@ -286,15 +312,13 @@ export class PostgresService<Name extends string = 'pg'>
 
             return new Promise<void>((resolve, reject) => {
                 const ok = () => {
-                    if (trx.root.id === transaction.root_id) {
-                        delete services[service].transactions[trx.id];
-                    }
-                    Log.info('service', 'postgres', `Transaction ${trx.id} rolledback on PostgreSQL service ${service}`);
+                    Log.info('service', 'postgres', `Transaction ${trx.root.globalId} rolledback on PostgreSQL service ${service}`);
+                    clearRegistry();
                     resolve();
                 };
                 const error = () => {
                     delete services[service].transactions[trx.id];
-                    reject(new Error(`Failed to rollback transaction ${trx.id}`));
+                    reject(new Error(`Critical: Failed to rollback transaction ${trx.root.globalId}`));
                 };
                 transaction.finish_commit = error;
                 transaction.finish_rollback = ok;

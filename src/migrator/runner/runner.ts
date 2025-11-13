@@ -308,19 +308,18 @@ export class MigrationRunner {
             trxEngines['__nesoi_postgres'] = new TrxEngine('plugin:postgres', module, {}, {}, {});
         }
         
-        const status = await daemon.trx(migration.module)
+        // We don't want the trx to call sql.begin, given it was called
+        // by the migrator itself.
+        const idempotent = true;
 
-            // We don't want the trx to call sql.begin, given it was called
-            // by the migrator itself.
-            .idempotent()
-            
+        const status = await daemon.trx(migration.module)            
             .run(async trx => {
                 Trx.set(trx, serviceName+'.sql', sql);
                 await migration.routine!.up({
                     sql,
                     trx
                 });
-            });
+            }, undefined, idempotent);
         if (status.state !== 'ok') {
             throw new Error('Migration failed. Rolling back all batch changes.');
         }

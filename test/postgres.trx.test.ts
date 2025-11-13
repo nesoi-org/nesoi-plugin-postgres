@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await */
-/* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
+ 
 import { BucketBuilder } from 'nesoi/lib/elements/entities/bucket/bucket.builder';
 import { Log } from 'nesoi/lib/engine/util/log';
 import { InlineApp } from 'nesoi/lib/engine/app/inline.app';
@@ -11,8 +11,10 @@ import { MigrationProvider } from '../src/migrator/generator/provider';
 import { MigrationRunner } from '../src/migrator/runner/runner';
 import { Database } from '../src/migrator/database';
 import { ExternalsBuilder } from 'nesoi/lib/elements/edge/externals/externals.builder';
-import { AnyTrx } from 'nesoi/lib/engine/transaction/trx';
+import { AnyTrx, TrxStatus } from 'nesoi/lib/engine/transaction/trx';
 import { TrxEngineConfig } from 'nesoi/lib/engine/transaction/trx_engine.config';
+import { AnyBucketAdapter } from 'nesoi/lib/elements/entities/bucket/adapters/bucket_adapter';
+import { JobBuilder } from 'nesoi/lib/elements/blocks/job/job.builder';
 
 Log.level = 'off';
 
@@ -99,6 +101,33 @@ async function setup() {
             name: $.string
         }));
 
+    const selfNonIdptJob = new JobBuilder('MODULE2', 'self_non_idpt')
+        .message('', $ => ({ name: $.string }))
+        .input('@')
+        .method($ => $.trx.bucket('three').create({
+            id: 'TEST',
+            name: ($.msg as any).name
+        }));
+
+    const selfIdptJob = new JobBuilder('MODULE2', 'self_idpt')
+        .message('', $ => ({ name: $.string }))
+        .input('@')
+        .method($ => $.trx.bucket('three').readAll());
+
+    const otherNonIdptJob = new JobBuilder('MODULE2', 'other_non_idpt')
+        .message('', $ => ({ name: $.string }))
+        .input('@')
+        .method($ => $.trx.bucket('MODULE3::five').create({
+            id: 'TEST',
+            name: ($.msg as any).name
+        }));
+
+    const otherIdptJob = new JobBuilder('MODULE2', 'other_idpt')
+        .message('', $ => ({ name: $.string }))
+        .input('@')
+        .method($ => $.trx.bucket('MODULE3::five').readAll());
+
+        
     pg1 = new PostgresService('pg1', PostgresConfig1);
     pg2 = new PostgresService('pg2', PostgresConfig2);
     pg3 = new PostgresService('pg3', PostgresConfig3);
@@ -110,6 +139,12 @@ async function setup() {
         threeBucket,
         fourBucket,
         fiveBucket,
+        selfNonIdptJob,
+        selfIdptJob,
+        otherNonIdptJob,
+        otherIdptJob,
+        new ExternalsBuilder('MODULE2')
+            .bucket('MODULE3::five' as never),
         new ExternalsBuilder('MODULE3')
             .bucket('MODULE1::one' as never)
     ])
@@ -221,9 +256,9 @@ describe('PostgreSQL Transactions', () => {
             expect(result1.state).toEqual('ok');            
             
             let ones2;
-            const result2 = await daemon.trx('MODULE1').idempotent().run(async trx => {                
+            const result2 = await daemon.trx('MODULE1').run(async trx => {                
                 ones2 = await trx.bucket('one').readAll();
-            });
+            }, undefined, true);
             expect(ones2).toHaveLength(3);
             expect(result2.state).toEqual('ok');
         });
@@ -251,9 +286,9 @@ describe('PostgreSQL Transactions', () => {
             expect(result1.state).toEqual('error');
             
             let ones2;
-            const result2 = await daemon.trx('MODULE1').idempotent().run(async trx => {                
+            const result2 = await daemon.trx('MODULE1').run(async trx => {                
                 ones2 = await trx.bucket('one').readAll();
-            });
+            }, undefined, true);
             expect(ones2).toHaveLength(0);
             expect(result2.state).toEqual('ok');
         });
@@ -298,16 +333,57 @@ describe('PostgreSQL Transactions', () => {
             
             let ones2;
             let twos2;
-            const result2 = await daemon.trx('MODULE1').idempotent().run(async trx => {                
+            const result2 = await daemon.trx('MODULE1').run(async trx => {                
                 ones2 = await trx.bucket('one').readAll();
                 twos2 = await trx.bucket('two').readAll();
-            });
+            }, undefined, true);
             expect(ones2).toHaveLength(0);
             expect(twos2).toHaveLength(0);
             expect(result2.state).toEqual('ok');
         });
 
     });
+
+    async function idpt_test(fn: () => Promise<any>, spies: Record<string, {
+            begin: number,
+            continue: number,
+            commit: number,
+            rollback: number,
+        }>): Promise<TrxStatus<any>> {
+
+        const spy: Record<string, {
+                begin: jest.SpyInstance,
+                continue: jest.SpyInstance,
+                commit: jest.SpyInstance,
+                rollback: jest.SpyInstance,
+            }> = {};
+        for (const module in spies) {
+            const trxEngines = (daemon as any).trxEngines as AnyDaemon['trxEngines'];
+            const config = (trxEngines[module] as any).config as TrxEngineConfig<any, any, any, any>;
+            const wrap = config.wrap![0];
+                
+            spy[module] = {
+                begin: jest.spyOn(wrap, 'begin'),
+                continue: jest.spyOn(wrap, 'continue'),
+                commit: jest.spyOn(wrap, 'commit'),
+                rollback: jest.spyOn(wrap, 'rollback'),
+            };
+        }
+
+        const status = await fn();
+        if (Log.level !== 'off') {
+            console.log(status.summary());
+        }
+
+        for (const module in spies) {
+            expect(spy[module].begin).toHaveBeenCalledTimes(spies[module].begin);
+            expect(spy[module].continue).toHaveBeenCalledTimes(spies[module].continue);
+            expect(spy[module].commit).toHaveBeenCalledTimes(spies[module].commit);
+            expect(spy[module].rollback).toHaveBeenCalledTimes(spies[module].rollback);
+        }
+
+        return status;
+    }
 
     describe('Idempotency', () => {
 
@@ -322,48 +398,12 @@ describe('PostgreSQL Transactions', () => {
 
         it('should create idempotent transaction', async () => {
             let idpt;
-            await daemon.trx('MODULE1').idempotent().run(async trx => {
+            await daemon.trx('MODULE1').run(async trx => {
                 idpt = ((trx as any).trx as AnyTrx).idempotent;
                 return Promise.resolve();
-            });
+            }, undefined, true);
             expect(idpt).toEqual(true);
         });
-
-        async function idpt_test(fn: () => Promise<any>, spies: Record<string, {
-            begin: number,
-            continue: number,
-            commit: number,
-            rollback: number,
-        }>) {
-
-            const spy: Record<string, {
-                begin: jest.SpyInstance,
-                continue: jest.SpyInstance,
-                commit: jest.SpyInstance,
-                rollback: jest.SpyInstance,
-            }> = {};
-            for (const module in spies) {
-                const trxEngines = (daemon as any).trxEngines as AnyDaemon['trxEngines'];
-                const config = (trxEngines[module] as any).config as TrxEngineConfig<any, any, any, any>;
-                const wrap = config.wrap![0];
-                
-                spy[module] = {
-                    begin: jest.spyOn(wrap, 'begin'),
-                    continue: jest.spyOn(wrap, 'continue'),
-                    commit: jest.spyOn(wrap, 'commit'),
-                    rollback: jest.spyOn(wrap, 'rollback'),
-                };
-            }
-
-            await fn();
-
-            for (const module in spies) {
-                expect(spy[module].begin).toHaveBeenCalledTimes(spies[module].begin);
-                expect(spy[module].continue).toHaveBeenCalledTimes(spies[module].continue);
-                expect(spy[module].commit).toHaveBeenCalledTimes(spies[module].commit);
-                expect(spy[module].rollback).toHaveBeenCalledTimes(spies[module].rollback);
-            }
-        }
 
         it('should trigger commit for non-idempotent transaction', async () => {
             await idpt_test(async () => {
@@ -387,9 +427,9 @@ describe('PostgreSQL Transactions', () => {
 
         it('should not trigger commit for idempotent transaction', async () => {
             await idpt_test(async () => {
-                await daemon.trx('MODULE1').idempotent().run(async () => {
+                await daemon.trx('MODULE1').run(async () => {
                     return Promise.resolve();
-                });
+                }, undefined, true);
             }, {
                 MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 }
             });
@@ -397,12 +437,810 @@ describe('PostgreSQL Transactions', () => {
 
         it('should not trigger rollback for idempotent transaction', async () => {
             await idpt_test(async () => {
-                await daemon.trx('MODULE1').idempotent().run(async () => {
+                await daemon.trx('MODULE1').run(async () => {
                     throw new Error('Simulated error, used to trigger a rollback on test.');
-                });
+                }, undefined, true);
             }, {
                 MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 }
             });
+        });
+    });
+
+    async function checkTrxCleanup(logs?: {
+        [name: string]: number | undefined
+    }) {
+        // Nesoi Transaction registry on engines
+        const trxEngines = (daemon as any).trxEngines as AnyDaemon['trxEngines'];
+        for (const module of ['MODULE1', 'MODULE2', 'MODULE3']) {
+            const engine = trxEngines[module];
+            const adapter = (engine as any).adapter as AnyBucketAdapter;
+            const trxs = await adapter.index({} as any);
+            expect(trxs).toHaveLength(0);
+            
+            if (logs?.[module]) {
+                const trx_logs = await adapter.index({} as any);
+                expect(trx_logs).toHaveLength(logs[module]);
+            }
+        }
+
+        // DB Transaction registry on services
+        expect(Object.keys((pg1 as any).transactions as PostgresService['transactions'])).toHaveLength(0);
+        expect(Object.keys((pg2 as any).transactions as PostgresService['transactions'])).toHaveLength(0);
+        expect(Object.keys((pg3 as any).transactions as PostgresService['transactions'])).toHaveLength(0);
+    }
+    
+    describe('Idempotency Tree', () => {
+
+        it('non-idempotent trx', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async () => {
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+            expect(status.idempotent).toEqual(false);
+        });
+
+        it('non-idempotent trx, 1 non-idempotent child', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 idempotent child', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 2 non-idempotent child (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE6',
+                        name: 'test'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 1, commit: 1, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 2 non-idempotent child (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                    await trx.bucket('MODULE3::five').create({
+                        id: 'FIVE3',
+                        name: 'test'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 1, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE3::bucket:five');
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 2 idempotent child (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                    await trx.bucket('MODULE2::three').readAll();
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 2, continue: 0, commit: 0, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 2 idempotent child (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                    await trx.bucket('MODULE3::five').readAll();
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 0, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE3::bucket:five');
+            expect(status.nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 idempotent child + 1 non-idempotent child (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 2, continue: 0, commit: 1, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 non-idempotent child + 1 idempotent child (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                    await trx.bucket('MODULE2::three').readAll();
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 1, commit: 1, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            
+            // This is the edge case where a trx requested as idempotent (readAll)
+            // actually becomes non-idempotent due to a previously open
+            // trx with the same id on the module.
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 idempotent child + 1 non-idempotent child (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                    await trx.bucket('MODULE3::five').create({
+                        id: 'FIVE3',
+                        name: 'test'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE3::bucket:five');
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 non-idempotent child + 1 idempotent child (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                    await trx.bucket('MODULE3::five').readAll();
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE3::bucket:five');
+            expect(status.nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 non-idempotent child, 1 non-idempotent subchild (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::self_non_idpt').run({
+                        name: 'text'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:self_non_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 non-idempotent child, 1 idempotent subchild (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::self_idpt').run({
+                        name: 'text'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:self_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 idempotent child, 1 non-idempotent subchild (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::self_non_idpt').idempotent.run({
+                        name: 'text'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 1 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            // This scenario should fail due to a non-idempotent bucket action
+            // performed inside an idempotent transaction.
+            expect(status.state).toEqual('error');
+            expect(status.error?.name).toEqual('Bucket.IdempotentTransaction');
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 idempotent child, 1 idempotent subchild (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::self_idpt').idempotent.run({
+                        name: 'text'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:self_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 non-idempotent child, 1 non-idempotent subchild (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::other_non_idpt').run({
+                        name: 'text'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:other_non_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[0].nodes[0].nodes[1].scope).toEqual('MODULE2::externals:MODULE3::bucket:five');
+            expect(status.nodes[0].nodes[0].nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 non-idempotent child, 1 idempotent subchild (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::other_idpt').run({
+                        name: 'text'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:other_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[0].nodes[0].nodes[1].scope).toEqual('MODULE2::externals:MODULE3::bucket:five');
+            expect(status.nodes[0].nodes[0].nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 idempotent child, 1 non-idempotent subchild (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::other_non_idpt').idempotent.run({
+                        name: 'text'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:other_non_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[0].nodes[0].nodes[1].scope).toEqual('MODULE2::externals:MODULE3::bucket:five');
+            expect(status.nodes[0].nodes[0].nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('non-idempotent trx, 1 idempotent child, 1 idempotent subchild (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::other_idpt').idempotent.run({
+                        name: 'text'
+                    });
+                }),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(false);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:other_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[0].nodes[0].nodes[1].scope).toEqual('MODULE2::externals:MODULE3::bucket:five');
+            expect(status.nodes[0].nodes[0].nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async () => {
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+            expect(status.idempotent).toEqual(true);
+        });
+
+        it('idempotent trx, 1 non-idempotent child', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 idempotent child', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 2 non-idempotent child (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE6',
+                        name: 'test'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 1, commit: 1, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 2 non-idempotent child (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                    await trx.bucket('MODULE3::five').create({
+                        id: 'FIVE3',
+                        name: 'test'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 1, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE3::bucket:five');
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 2 idempotent child (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                    await trx.bucket('MODULE2::three').readAll();
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 2, continue: 0, commit: 0, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 2 idempotent child (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                    await trx.bucket('MODULE3::five').readAll();
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 0, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE3::bucket:five');
+            expect(status.nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 idempotent child + 1 non-idempotent child (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 2, continue: 0, commit: 1, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 non-idempotent child + 1 idempotent child (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                    await trx.bucket('MODULE2::three').readAll();
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 1, commit: 1, rollback: 0 }
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            
+            // This is the edge case where a trx requested as idempotent (readAll)
+            // actually becomes non-idempotent due to a previously open
+            // trx with the same id on the module.
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 idempotent child + 1 non-idempotent child (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').readAll();
+                    await trx.bucket('MODULE3::five').create({
+                        id: 'FIVE3',
+                        name: 'test'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE3::bucket:five');
+            expect(status.nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 non-idempotent child + 1 idempotent child (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    await trx.bucket('MODULE2::three').create({
+                        id: 'THREE5',
+                        name: 'test'
+                    });
+                    await trx.bucket('MODULE3::five').readAll();
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::bucket:three');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[1].scope).toEqual('MODULE1::externals:MODULE3::bucket:five');
+            expect(status.nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 non-idempotent child, 1 non-idempotent subchild (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::self_non_idpt').run({
+                        name: 'text'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:self_non_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 non-idempotent child, 1 idempotent subchild (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::self_idpt').run({
+                        name: 'text'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:self_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 idempotent child, 1 non-idempotent subchild (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::self_non_idpt').idempotent.run({
+                        name: 'text'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            // This scenario should fail due to a non-idempotent bucket action
+            // performed inside an idempotent transaction.
+            expect(status.state).toEqual('error');
+            expect(status.error?.name).toEqual('Bucket.IdempotentTransaction');
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 idempotent child, 1 idempotent subchild (same module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::self_idpt').idempotent.run({
+                        name: 'text'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:self_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 non-idempotent child, 1 non-idempotent subchild (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::other_non_idpt').run({
+                        name: 'text'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:other_non_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[0].nodes[0].nodes[1].scope).toEqual('MODULE2::externals:MODULE3::bucket:five');
+            expect(status.nodes[0].nodes[0].nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 non-idempotent child, 1 idempotent subchild (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::other_idpt').run({
+                        name: 'text'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:other_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(false);
+            expect(status.nodes[0].nodes[0].nodes[1].scope).toEqual('MODULE2::externals:MODULE3::bucket:five');
+            expect(status.nodes[0].nodes[0].nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 idempotent child, 1 non-idempotent subchild (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::other_non_idpt').idempotent.run({
+                        name: 'text'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 1, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:other_non_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[0].nodes[0].nodes[1].scope).toEqual('MODULE2::externals:MODULE3::bucket:five');
+            expect(status.nodes[0].nodes[0].nodes[1].ext?.idempotent).toEqual(false);
+            await checkTrxCleanup();
+        });
+
+        it('idempotent trx, 1 idempotent child, 1 idempotent subchild (diff module)', async () => {
+            const status = await idpt_test(async () =>
+                daemon.trx('MODULE1').run(async trx => {                
+                    return trx.job('MODULE2::other_idpt').idempotent.run({
+                        name: 'text'
+                    });
+                }, undefined, true),
+            {
+                MODULE1: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE2: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+                MODULE3: { begin: 1, continue: 0, commit: 0, rollback: 0 },
+            });
+
+            expect(status.idempotent).toEqual(true);
+            expect(status.nodes[0].scope).toEqual('MODULE1::externals:MODULE2::job:other_idpt');
+            expect(status.nodes[0].ext?.idempotent).toEqual(true);
+            expect(status.nodes[0].nodes[0].nodes[1].scope).toEqual('MODULE2::externals:MODULE3::bucket:five');
+            expect(status.nodes[0].nodes[0].nodes[1].ext?.idempotent).toEqual(true);
+            await checkTrxCleanup();
         });
 
     });
@@ -439,10 +1277,10 @@ describe('PostgreSQL Transactions', () => {
             
             let threes2;
             let fours2;
-            const result2 = await daemon.trx('MODULE2').idempotent().run(async trx => {                
+            const result2 = await daemon.trx('MODULE2').run(async trx => {                
                 threes2 = await trx.bucket('three').readAll();
                 fours2 = await trx.bucket('four').readAll();
-            });
+            }, undefined, true);
             expect(threes2).toHaveLength(2);
             expect(fours2).toHaveLength(2);
             expect(result2.state).toEqual('ok');
@@ -480,10 +1318,10 @@ describe('PostgreSQL Transactions', () => {
             
             let threes2;
             let fours2;
-            const result2 = await daemon.trx('MODULE2').idempotent().run(async trx => {                
+            const result2 = await daemon.trx('MODULE2').run(async trx => {                
                 threes2 = await trx.bucket('three').readAll();
                 fours2 = await trx.bucket('four').readAll();
-            });
+            }, undefined, true);
             expect(threes2).toHaveLength(0);
             expect(fours2).toHaveLength(0);
             expect(result2.state).toEqual('ok');
@@ -519,10 +1357,10 @@ describe('PostgreSQL Transactions', () => {
             
             let ones2;
             let fives2;
-            const result2 = await daemon.trx('MODULE3').idempotent().run(async trx => {                
+            const result2 = await daemon.trx('MODULE3').run(async trx => {                
                 ones2 = await trx.bucket('MODULE1::one').readAll();
                 fives2 = await trx.bucket('five').readAll();
-            });
+            }, undefined, true);
             expect(ones2).toHaveLength(2);
             expect(fives2).toHaveLength(2);
             expect(result2.state).toEqual('ok');
@@ -560,10 +1398,10 @@ describe('PostgreSQL Transactions', () => {
             
             let ones2;
             let fives2;
-            const result2 = await daemon.trx('MODULE3').idempotent().run(async trx => {                
+            const result2 = await daemon.trx('MODULE3').run(async trx => {                
                 ones2 = await trx.bucket('MODULE1::one').readAll();
                 fives2 = await trx.bucket('five').readAll();
-            });
+            }, undefined, true);
             expect(fives2).toHaveLength(0);
             expect(ones2).toHaveLength(0);
             expect(result2.state).toEqual('ok');
