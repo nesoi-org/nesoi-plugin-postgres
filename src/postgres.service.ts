@@ -143,7 +143,7 @@ export class PostgresService<Name extends string = 'pg'>
                         Trx.set(trx.root, service+'.sql', sql);
 
                         // Begin is done
-                        Log.info('service', 'postgres', `Transaction ${trx.root.globalId} started on PostgreSQL service ${service}`);
+                        Log.info('service', 'postgres', `Transaction ${trx.root.globalId} started on PostgreSQL service ${service} at module ${module.name}`);
                         wrap_resolve();
                     }))
                     // The db transaction commit/rollback callbacks triggers the sections below when called.

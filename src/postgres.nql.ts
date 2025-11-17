@@ -7,7 +7,6 @@ import { Trx } from 'nesoi/lib/engine/transaction/trx';
 import { Tree } from 'nesoi/lib/engine/data/tree';
 import { PostgresBucketAdapter } from './postgres.bucket_adapter';
 import { Log } from 'nesoi/lib/engine/util/log';
-import { $BucketView } from 'nesoi/lib/elements/entities/bucket/view/bucket_view.schema';
 
 type Obj = Record<string, any>
 
@@ -23,7 +22,7 @@ export class PostgresNQLRunner extends NQLRunner {
         return column;
     }
 
-    async run(trx: AnyTrxNode, part: NQL_Part, params: Obj[], param_templates: Record<string, string>[], pagination?: NQL_Pagination, view?: $BucketView) {
+    async run(trx: AnyTrxNode, part: NQL_Part, params: Obj[], param_templates: Record<string, string>[], pagination?: NQL_Pagination) {
         const { tableName, serviceName } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
         const sql = Trx.get<postgres.Sql<any>|undefined>(trx, serviceName+'.sql');
         if (!sql) {
@@ -120,6 +119,7 @@ export class PostgresNQLRunner extends NQLRunner {
                 queryValue = Tree.get(params, path);
                 if (rule.case_i) queryValue = (queryValue as string).toLowerCase();
             }
+            // subquery
             else {
                 const bucket = rule.value.subquery.bucket;
                 const select = rule.value.subquery.select;
@@ -161,16 +161,16 @@ export class PostgresNQLRunner extends NQLRunner {
 
         const param_ids = new Set<string>();
         const wheres = new Set<string>();
-        for (const param of params) {
+        for (let i = 0; i < params.length; i++) {
+            const param = params[i];
             if ('id' in param) {
                 if (param_ids.has(param.id)) continue;
                 param_ids.add(param.id);
             }
-            for (const param_template of param_templates) {
-                const where = _union(part.union, param, param_template);
-                if (where) {
-                    wheres.add(where);
-                }
+            const param_template = param_templates[i];
+            const where = _union(part.union, param, param_template);
+            if (where) {
+                wheres.add(where);
             }
         }
         const where = wheres.size ? `WHERE ${[...wheres].join(' OR ')}` : '';
@@ -197,17 +197,17 @@ export class PostgresNQLRunner extends NQLRunner {
             count = parseInt(res_count[0].count);
         }
 
-        const viewFields = view
-            ? Object.entries(view.fields)
-                .filter(e => e[1].scope === 'model')
-                .map(e => e[0])
-            : '*';
+        const select = part.select ?? '*';
 
-        const data = await sql.unsafe(`SELECT ${viewFields} ${sql_str} ${order_str} ${limit_str}`, sql_params).catch((e: unknown) => {
+        let data = await sql.unsafe(`SELECT ${select} ${sql_str} ${order_str} ${limit_str}`, sql_params).catch((e: unknown) => {
             Log.error('bucket', 'postgres', (e as any).toString(), e as any);
             throw new Error('Database error.');
         }) as Obj[];
-        
+
+        if (part.select) {
+            data = data.map(obj => obj[part.select!]);
+        }
+
         return {
             data,
             totalItems: count,
