@@ -7,6 +7,7 @@ import { Trx } from 'nesoi/lib/engine/transaction/trx';
 import { Tree } from 'nesoi/lib/engine/data/tree';
 import { PostgresBucketAdapter } from './postgres.bucket_adapter';
 import { Log } from 'nesoi/lib/engine/util/log';
+import { BucketModel } from 'nesoi/lib/elements/entities/bucket/model/bucket_model';
 
 type Obj = Record<string, any>
 
@@ -22,7 +23,7 @@ export class PostgresNQLRunner extends NQLRunner {
         return column;
     }
 
-    async run(trx: AnyTrxNode, part: NQL_Part, params: Obj[], param_templates: Record<string, string>[], pagination?: NQL_Pagination) {
+    async run(trx: AnyTrxNode, part: NQL_Part, params: Obj[], param_templates: Record<string, string>[], pagination?: NQL_Pagination, view?: any, serialize?: boolean) {
         const { tableName, serviceName } = PostgresBucketAdapter.getTableMeta(trx, part.union.meta);
         const sql = Trx.get<postgres.Sql<any>|undefined>(trx, serviceName+'.sql');
         if (!sql) {
@@ -203,9 +204,13 @@ export class PostgresNQLRunner extends NQLRunner {
             Log.error('bucket', 'postgres', (e as any).toString(), e as any);
             throw new Error('Database error.');
         }) as Obj[];
-
+        
         if (part.select) {
             data = data.map(obj => obj[part.select!]);
+        }
+        else if (serialize) {
+            const model = new BucketModel(part.union.meta.schema!);
+            data = data.map(obj => model.copy(obj, 'load', () => true));
         }
 
         return {

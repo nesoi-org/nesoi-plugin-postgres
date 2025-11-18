@@ -51,9 +51,9 @@ export class PostgresBucketAdapter<
 
     /* Read operations */
 
-    private static serialize_rule = (field?: { depth: number }) => !!field && field.depth > 0;
+    private static serialize_rule_save = (field?: { depth: number }) => !!field && field.depth > 0;
 
-    async index(trx: AnyTrxNode) {
+    async index(trx: AnyTrxNode, serialize?: boolean) {
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
         const objs = await this.guard(sql)`
             SELECT *
@@ -62,12 +62,12 @@ export class PostgresBucketAdapter<
         `;
         const parsed: any[] = [];
         for (const obj of objs) {
-            parsed.push(this.model.copy(obj, 'load', PostgresBucketAdapter.serialize_rule));
+            parsed.push(this.model.copy(obj, 'load', () => !!serialize));
         }
         return objs;
     }
 
-    async get(trx: AnyTrxNode, id: Obj['id']): Promise<undefined | Obj> {
+    async get(trx: AnyTrxNode, id: Obj['id'], serialize?: boolean): Promise<undefined | Obj> {
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
         const objs = await this.guard(sql)`
             SELECT *
@@ -75,7 +75,7 @@ export class PostgresBucketAdapter<
             WHERE id = ${ id }
         `;
         if (!objs[0]) return undefined;
-        return this.model.copy(objs[0], 'load', PostgresBucketAdapter.serialize_rule);
+        return this.model.copy(objs[0], 'load', () => !!serialize);
     }
 
     /* Write Operations */
@@ -97,7 +97,7 @@ export class PostgresBucketAdapter<
         obj: Record<string, any>
     ) {
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
-        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule);
+        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule_save);
 
         // Use schema fields as keys
         const keys = Object.keys(this.schema.model.fields)
@@ -114,7 +114,7 @@ export class PostgresBucketAdapter<
             ${ sql(input, keys) }
             RETURNING *`;
 
-        return this.model.copy(objs[0], 'load', PostgresBucketAdapter.serialize_rule);
+        return this.model.copy(objs[0], 'load');
     }
 
     async createMany(
@@ -131,7 +131,7 @@ export class PostgresBucketAdapter<
         
         const inputs: Record<string, any>[] = [];
         for (const obj of objs) {
-            inputs.push(this.model.copy(obj, 'save'), PostgresBucketAdapter.serialize_rule);
+            inputs.push(this.model.copy(obj, 'save'), PostgresBucketAdapter.serialize_rule_save);
         }
 
         // Pre-cleanup
@@ -148,7 +148,7 @@ export class PostgresBucketAdapter<
 
         const parsed: any[] = [];
         for (const obj of inserted) {
-            parsed.push(this.model.copy(obj, 'load'), PostgresBucketAdapter.serialize_rule);
+            parsed.push(this.model.copy(obj, 'load'));
         }
 
         return parsed;
@@ -159,7 +159,7 @@ export class PostgresBucketAdapter<
         obj: Record<string, any>
     ) {
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
-        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule);
+        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule_save, Object.keys(obj));
 
         // Use schema keys that exist on object
         const keys = Object.keys(this.schema.model.fields)
@@ -178,7 +178,7 @@ export class PostgresBucketAdapter<
             WHERE id = ${ input.id }
             RETURNING *
         `;
-        return this.model.copy(objs[0], 'load', PostgresBucketAdapter.serialize_rule);
+        return this.model.copy(objs[0], 'load');
     }
 
     async patchMany(
@@ -197,7 +197,7 @@ export class PostgresBucketAdapter<
         obj: Record<string, any>
     ) {
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
-        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule);
+        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule_save);
 
         // Use all schema keys
         const keys = Object.keys(this.schema.model.fields)
@@ -213,7 +213,7 @@ export class PostgresBucketAdapter<
             RETURNING *
         `;
 
-        return this.model.copy(objs[0], 'load', PostgresBucketAdapter.serialize_rule);
+        return this.model.copy(objs[0], 'load');
     }
 
     async replaceMany(
@@ -232,7 +232,7 @@ export class PostgresBucketAdapter<
         obj: Record<string, any>
     ) {
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
-        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule);
+        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule_save);
 
         // Use all schema keys
         const keys = Object.keys(this.schema.model.fields)
@@ -252,7 +252,7 @@ export class PostgresBucketAdapter<
             ${ sql(input, ukeys) }
             RETURNING *
         `;
-        return this.model.copy(objs[0], 'load', PostgresBucketAdapter.serialize_rule);
+        return this.model.copy(objs[0], 'load');
     }
 
     async putMany(

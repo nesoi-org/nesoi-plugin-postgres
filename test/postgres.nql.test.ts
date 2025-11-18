@@ -64,7 +64,7 @@ async function setup() {
             color_id: $.int,
             tag: $.string,
             scope: $.string.optional,
-            props: $.dict($.string)
+            props: $.dict($.int)
         }));
 
 

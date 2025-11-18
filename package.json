@@ -1,6 +1,6 @@
 {
   "name": "@nesoi/plugin-postgres",
-  "version": "3.4.1",
+  "version": "3.4.2",
   "description": "PostgreSQL plugin for the nesoi framework",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
   },
   "homepage": "https://github.com/nesoi-org/nesoi-plugin-postgres#readme",
   "peerDependencies": {
-    "nesoi": "^3.4.1"
+    "nesoi": "file:../nesoi/build"
   },
   "dependencies": {
     "postgres": "3.4.7"
@@ -37,7 +37,7 @@
     "@types/node": "22.14.1",
     "eslint": "9.25.0",
     "jest": "29.7.0",
-    "nesoi": "^3.4.1",
+    "nesoi": "file:../nesoi/build",
     "ts-jest": "29.2.5",
     "tsx": "4.19.4",
     "typescript": "5.8.3",

@@ -13,7 +13,6 @@ import { Database } from '../src/migrator/database';
 import { ExternalsBuilder } from 'nesoi/lib/elements/edge/externals/externals.builder';
 import { AnyTrx, TrxStatus } from 'nesoi/lib/engine/transaction/trx';
 import { TrxEngineConfig } from 'nesoi/lib/engine/transaction/trx_engine.config';
-import { AnyBucketAdapter } from 'nesoi/lib/elements/entities/bucket/adapters/bucket_adapter';
 import { JobBuilder } from 'nesoi/lib/elements/blocks/job/job.builder';
 
 Log.level = 'off';
@@ -453,11 +452,11 @@ describe('PostgreSQL Transactions', () => {
         const trxEngines = (daemon as any).trxEngines as AnyDaemon['trxEngines'];
         for (const module of ['MODULE1', 'MODULE2', 'MODULE3']) {
             const engine = trxEngines[module];
-            const adapter = (engine as any).adapter as AnyBucketAdapter;
-            const trxs = await adapter.index({} as any);
-            expect(trxs).toHaveLength(0);
+            const ongoing = (engine as any).ongoing;
+            expect(Object.keys(ongoing)).toHaveLength(0);
             
             if (logs?.[module]) {
+                const adapter = (engine as any).log_adapter;
                 const trx_logs = await adapter.index({} as any);
                 expect(trx_logs).toHaveLength(logs[module]);
             }
