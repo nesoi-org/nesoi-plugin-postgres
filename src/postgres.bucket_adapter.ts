@@ -159,7 +159,9 @@ export class PostgresBucketAdapter<
         obj: Record<string, any>
     ) {
         const sql = Trx.get<postgres.Sql<any>>(trx, this.service.name+'.sql');
-        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule_save, Object.keys(obj));
+
+        const _keys = Object.entries(obj).filter(e => e[1] !== undefined).map(e => e[0]);
+        const input = this.model.copy(obj, 'save', PostgresBucketAdapter.serialize_rule_save, _keys);
 
         // Use schema keys that exist on object
         const keys = Object.keys(this.schema.model.fields)
