@@ -61,6 +61,10 @@ export class PostgresNQLRunner extends NQLRunner {
             
             // TODO: handle '.#'
 
+            if (rule.op === 'contains') {
+                column = `${column}::text`;
+            }
+
             // Special case: "present" operation
             if (rule.op === 'present') {
                 if (rule.not) {

@@ -11,6 +11,7 @@ import { Database } from './migrator/database';
 import { PostgresConfig } from './postgres.config';
 import { Service } from 'nesoi/lib/engine/app/service';
 import { AnyModule } from 'nesoi/lib/engine/module';
+import { NesoiDuration } from 'nesoi/lib/engine/data/duration';
 
 export class PostgresService<Name extends string = 'pg'>
     extends Service<Name, PostgresConfig | undefined> {
@@ -82,7 +83,23 @@ export class PostgresService<Name extends string = 'pg'>
                     from      : [1700],
                     serialize : (val?: NesoiDecimal) => val?.toString(),
                     parse     : (val?: string) => val ? new NesoiDecimal(val) : undefined
-                }
+                },
+                interval: {
+                    to        : 1186,
+                    from      : [1186],
+                    serialize : (val?: NesoiDuration) => val?.toString(),
+                    parse     : (val?: string) => {
+                        if (!val) return undefined;
+                        const match = val.match(/(\d\d):(\d\d):(\d\d)/);
+                        if (!match) throw new Error(`Invalid duration from db: ${val}`);
+                        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                        const [_, hours, mins, secs] = match;
+                        const total_secs = parseInt(hours)*3600 + parseInt(mins)*60 + parseInt(secs);
+                        if (total_secs % 3600 === 0) return new NesoiDuration({hours: total_secs/3600});
+                        if (total_secs % 60 === 0) return new NesoiDuration({minutes: total_secs/60});
+                        return new NesoiDuration({seconds: total_secs});
+                    }
+                },
             }
         });
         this.nql = new PostgresNQLRunner();
@@ -247,7 +264,7 @@ export class PostgresService<Name extends string = 'pg'>
 
             return new Promise<void>((resolve, reject) => {
                 const ok = () => {
-                    Log.info('service', 'postgres', `Transaction ${trx.root.globalId} commited on PostgreSQL service ${service}`);
+                    Log.debug('service', 'postgres', `Transaction ${trx.root.globalId} commited on PostgreSQL service ${service}`);
                     clearRegistry();
                     resolve();
                 };
@@ -312,7 +329,7 @@ export class PostgresService<Name extends string = 'pg'>
 
             return new Promise<void>((resolve, reject) => {
                 const ok = () => {
-                    Log.info('service', 'postgres', `Transaction ${trx.root.globalId} rolledback on PostgreSQL service ${service}`);
+                    Log.debug('service', 'postgres', `Transaction ${trx.root.globalId} rolledback on PostgreSQL service ${service}`);
                     clearRegistry();
                     resolve();
                 };
