@@ -188,8 +188,8 @@ export class PostgresService<Name extends string = 'pg'>
 
         /*
             Called on:
-            - Begin/Continue*: an idempotent transaction was requested for the engine with a specific id,
-            which didn't previously exist.
+            - Begin->Continue: an idempotent transaction was requested for the engine with a specific id,
+            which previously existed.
             - Continue: an ongoing nesoi transaction was requested for the engine,
             either because of an external transaction on the same module,
             or a nesoi transaction that has asynchronous behavior.
@@ -198,6 +198,8 @@ export class PostgresService<Name extends string = 'pg'>
             const postgres = services[service].sql;
             
             // If nesoi transaction is idempotent, we don't open a db transaction.
+            // This should usually not happen, given that idempotent transactions are
+            // not held/continued.
             if (trx.idempotent) {
                 Trx.set(trx.root, service+'.sql', postgres);
                 return Promise.resolve();
@@ -227,7 +229,8 @@ export class PostgresService<Name extends string = 'pg'>
             
             const transaction = services[service].transactions[trx.id];
             if (!transaction) {
-                throw new Error(`Critical: Failed to commit transaction ${trx.root.globalId}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
+                Log.warn('service', 'postgres', `Failed to commit transaction ${trx.root.globalId}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
+                return Promise.resolve();
             }
 
             const clearRegistry = () => {
@@ -292,7 +295,8 @@ export class PostgresService<Name extends string = 'pg'>
 
             const transaction = services[service].transactions[trx.id];
             if (!transaction) {
-                throw new Error(`Critical: Failed to rollback transaction ${trx.root.globalId}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
+                Log.warn('service', 'postgres', `Failed to rollback transaction ${trx.root.globalId}. PostgreSQL transaction no longer avialable (already committed/rolledback).`);
+                return Promise.resolve();
             }
 
             const clearRegistry = () => {
