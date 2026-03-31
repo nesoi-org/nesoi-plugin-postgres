@@ -143,7 +143,7 @@ export class PostgresNQLRunner extends NQLRunner {
             if (queryValue === undefined) { return ''; }
 
             // Special case: "contains" operation on primitive fields
-            if (rule.op === 'contains') {
+            if (rule.op === 'contains' && rule.kind === 'primitive') {
                 queryValue = `%${queryValue}%`;
             }
 
@@ -158,11 +158,15 @@ export class PostgresNQLRunner extends NQLRunner {
             }
 
             if (rule.op === 'contains' && column.includes('->')) {
-                if (rule.kind === 'list') {
-                    return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) AS item WHERE item ${op} (${p}))`;
+                let expr;
+                if (rule.case_i) expr = `${op} (${p})`;
+                else expr = `= (${p})::text`;
+
+                if (rule.kind === 'list') {    
+                    return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) AS item WHERE item ${expr})`;
                 }
                 else {
-                    return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_each_text(${column}) AS kv(key, value) WHERE key ${op} (${p}))`;
+                    return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_each_text(${column}) AS kv(key, value) WHERE key ${expr})`;
                 }
             }
 
