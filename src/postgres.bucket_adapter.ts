@@ -172,6 +172,14 @@ export class PostgresBucketAdapter<
 
         // Pre-cleanup
         this.precleanup(input);
+        for (const key in obj) {
+            if (obj[key] === null) {
+                input[key] = null;
+
+                // Avoid duplicate updated_by/updated_at keys
+                if (!keys.includes(key)) keys.push(key);
+            }
+        }
             
         // Update
         const objs = await this.guard(sql)`

@@ -13,11 +13,13 @@ type Obj = Record<string, any>
 
 export class PostgresNQLRunner extends NQLRunner {
     
-    static fieldpathToColumn(fieldpath?: string) {
+    static fieldpathToColumn(kind: NQL_Rule['kind'], fieldpath?: string) {
         if (!fieldpath) return undefined;
-        let column = fieldpath.replace(/\.(\w+)$/, '->>\'$1\'');
+        let column = kind === 'primitive'
+            ? fieldpath.replace(/\.(\w+)$/, '->>\'$1\'')
+            : fieldpath;
         column = column.replace(/\.(\w+)/g, '->\'$1\'');
-        if (!column.includes('->>')) {
+        if (!column.includes('->')) {
             column = `"${column}"`;
         }
         return column;
@@ -57,11 +59,12 @@ export class PostgresNQLRunner extends NQLRunner {
         const _rule = (rule: NQL_Rule, params: Obj, param_template: Record<string, string>): string => {
 
             // Replace '.' of fieldpath with '->' (JSONB compatible)
-            let column = PostgresNQLRunner.fieldpathToColumn(rule.fieldpath)!;
+            let column = PostgresNQLRunner.fieldpathToColumn(rule.kind, rule.fieldpath)!;
             
             // TODO: handle '.#'
 
-            if (rule.op === 'contains') {
+            // Special case: "contains" operation on primitives
+            if (rule.op === 'contains' && rule.kind === 'primitive') {
                 column = `${column}::text`;
             }
 
@@ -139,7 +142,7 @@ export class PostgresNQLRunner extends NQLRunner {
             // Don't add condition if value is null
             if (queryValue === undefined) { return ''; }
 
-            // Special case: "contains" operation
+            // Special case: "contains" operation on primitive fields
             if (rule.op === 'contains') {
                 queryValue = `%${queryValue}%`;
             }
@@ -152,8 +155,17 @@ export class PostgresNQLRunner extends NQLRunner {
             }
             else {
                 p = _param(queryValue);
-
             }
+
+            if (rule.op === 'contains' && column.includes('->')) {
+                if (rule.kind === 'list') {
+                    return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) AS item WHERE item ${op} (${p}))`;
+                }
+                else {
+                    return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_each_text(${column}) AS kv(key, value) WHERE key ${op} (${p}))`;
+                }
+            }
+
             return `${rule.not ? 'NOT ' : ''} ${column} ${op} (${p})`;
         };
 
@@ -185,7 +197,7 @@ export class PostgresNQLRunner extends NQLRunner {
         let order_str = '';
         if (sort?.length) {
             order_str = 'ORDER BY ' + sort.map(s =>
-                `${PostgresNQLRunner.fieldpathToColumn(s.key)} ${s.dir === 'asc' ? 'ASC' : 'DESC'}`
+                `${PostgresNQLRunner.fieldpathToColumn('primitive', s.key)} ${s.dir === 'asc' ? 'ASC' : 'DESC'}`
             ).join(',');
         }
         

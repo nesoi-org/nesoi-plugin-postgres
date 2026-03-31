@@ -58,17 +58,28 @@ async function setup() {
             }),
             p_dict: $.dict($.boolean)
         }));
+    
+    // Build bucket used for test
+    const bucket2 = new BucketBuilder('MODULE', 'BUCKET2')
+        .model($ => ({
+            id: $.int,
+            value: $.int.optional
+        }));
 
     // Build test app
     const app = new InlineApp('RUNTIME', [
-        bucket
+        bucket,
+        bucket2
     ])
         .service(pg)
         .config.module('MODULE', {
             buckets: {
                 'BUCKET': {
                     adapter: ($, {pg}) => new PostgresBucketAdapter($, pg, 'nesoi_test_table')
-                }
+                },
+                'BUCKET2': {
+                    adapter: ($, {pg}) => new PostgresBucketAdapter($, pg, 'nesoi_test_table2')
+                },
             },
             trx: {
                 wrap: [PostgresService.wrap('pg')]
@@ -84,10 +95,19 @@ async function setup() {
     await Database.createDatabase('NESOI_TEST', PostgresConfig().connection, { if_exists: 'delete' });
 
     const migrator = await MigrationProvider.create(daemon, pg);
-    const migration = await migrator.generateForBucket('MODULE', 'BUCKET', 'nesoi_test_table');
-    if (migration) {
-        migration.name = 'postgres.bucket_adapter.test';
-        await MigrationRunner.fromSchema.up(daemon, pg, migration);
+    {
+        const migration = await migrator.generateForBucket('MODULE', 'BUCKET', 'nesoi_test_table');
+        if (migration) {
+            migration.name = 'postgres.bucket_adapter.test';
+            await MigrationRunner.fromSchema.up(daemon, pg, migration);
+        }
+    }
+    {
+        const migration = await migrator.generateForBucket('MODULE', 'BUCKET2', 'nesoi_test_table2');
+        if (migration) {
+            migration.name = 'postgres.bucket_adapter.test2';
+            await MigrationRunner.fromSchema.up(daemon, pg, migration);
+        }
     }
         
     return daemon;
@@ -236,6 +256,92 @@ describe('Postgres Bucket Adapter', () => {
 
             // then
             expect(read2).toBeUndefined();
+        });
+    });
+
+    describe('Patch', () => {
+        it('should remove property when null is passed', async() => {
+            const response = await daemon.trx('MODULE').run(async trx => {
+                // given
+                const BUCKET = trx.bucket('BUCKET2');
+                // when
+                const created = await BUCKET.create({
+                    value: 99
+                });
+                const updated = await BUCKET.patch({
+                    id: created.id,
+                    value: null
+                } as any);
+    
+                return { created, updated };
+            });
+
+            const {
+                created,
+                updated,
+            } = response.output!;
+
+            // then
+            expect(created.id).toBeTruthy();
+            expect(updated.id).toEqual(created.id);
+            expect(created).toEqual({
+                id: created.id,
+                value: 99,
+                created_at: expect.any(NesoiDatetime),
+                updated_at: expect.any(NesoiDatetime),
+                created_by: null,
+                updated_by: null
+            });
+            expect(updated).toEqual({
+                id: created.id,
+                value: undefined,
+                created_at: expect.any(NesoiDatetime),
+                updated_at: expect.any(NesoiDatetime),
+                created_by: null,
+                updated_by: null
+            });
+        });
+
+        it('should not break when updated_by null is passed', async() => {
+            const response = await daemon.trx('MODULE').run(async trx => {
+                // given
+                const BUCKET = trx.bucket('BUCKET2');
+                // when
+                const created = await BUCKET.create({
+                    value: 99
+                });
+                const updated = await BUCKET.patch({
+                    id: created.id,
+                    updated_by: null
+                } as any);
+    
+                return { created, updated };
+            });
+
+            const {
+                created,
+                updated,
+            } = response.output!;
+
+            // then
+            expect(created.id).toBeTruthy();
+            expect(updated.id).toEqual(created.id);
+            expect(created).toEqual({
+                id: created.id,
+                value: 99,
+                created_at: expect.any(NesoiDatetime),
+                updated_at: expect.any(NesoiDatetime),
+                created_by: null,
+                updated_by: null
+            });
+            expect(updated).toEqual({
+                id: created.id,
+                value: 99,
+                created_at: expect.any(NesoiDatetime),
+                updated_at: expect.any(NesoiDatetime),
+                created_by: null,
+                updated_by: null
+            });
         });
     });
 

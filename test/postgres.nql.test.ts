@@ -67,6 +67,17 @@ async function setup() {
             props: $.dict($.int)
         }));
 
+    const deepBucket = new BucketBuilder('MODULE', 'deep')
+        .model($ => ({
+            id: $.int,
+            obj: $.obj({
+                prop: $.string,
+                obj: $.obj({ one: $.string, two: $.string }),
+                dict: $.dict($.string),
+                list: $.list($.string)
+            }),
+        }));
+
 
     const pg = new PostgresService(PostgresConfig);
     
@@ -74,7 +85,8 @@ async function setup() {
     const app = new InlineApp('RUNTIME', [
         tagBucket,
         colorBucket,
-        shapeBucket
+        shapeBucket,
+        deepBucket
     ])
         .service(pg)
         .config.module('MODULE', {
@@ -87,6 +99,9 @@ async function setup() {
                 },
                 'shape': {
                     adapter: ($, {pg}) => new PostgresBucketAdapter($, pg, 'shapes'),
+                },
+                'deep': {
+                    adapter: ($, {pg}) => new PostgresBucketAdapter($, pg, 'deeps'),
                 },
             },
             trx: {
@@ -103,7 +118,7 @@ async function setup() {
     await Database.createDatabase('NESOI_NQL_TEST', PostgresConfig().connection, { if_exists: 'delete' });
 
     const migrator = await MigrationProvider.create(daemon, pg);
-    for (const bucket of ['tag', 'color', 'shape']) {
+    for (const bucket of ['tag', 'color', 'shape', 'deep']) {
         const migration = await migrator.generateForBucket('MODULE', bucket, bucket+'s');
         if (migration) {
             migration.name = 'postgres.nql.'+bucket;
@@ -181,6 +196,42 @@ async function setup() {
             color_id: 3,
             tag: 'Tag 3',
             props: { a: 3, b: 1, c: 1 },
+            '#composition': {}
+        });
+
+        await trx.bucket('deep').put({
+            id: 1,
+            name: 'Deep 1',
+            obj: {
+                prop: 'A',
+                obj: { one: '01', two: '02' },
+                dict: { a: 'a0', b: 'b0' },
+                list: ['l0', 'l1']
+            },
+            '#composition': {}
+        });
+
+        await trx.bucket('deep').put({
+            id: 1,
+            name: 'Deep 2',
+            obj: {
+                prop: 'B',
+                obj: { one: '11', two: '12' },
+                dict: { a: 'a1', b: 'b1' },
+                list: ['l2', 'l3']
+            },
+            '#composition': {}
+        });
+
+        await trx.bucket('deep').put({
+            id: 1,
+            name: 'Deep 3',
+            obj: {
+                prop: 'C',
+                obj: { one: '21', two: '22' },
+                dict: { a: 'a2', b: 'b2' },
+                list: ['l4', 'l5']
+            },
             '#composition': {}
         });
     });
