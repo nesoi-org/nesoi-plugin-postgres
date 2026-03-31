@@ -157,16 +157,29 @@ export class PostgresNQLRunner extends NQLRunner {
                 p = _param(queryValue);
             }
 
-            if (rule.op === 'contains' && column.includes('->')) {
-                let expr;
-                if (rule.case_i) expr = `${op} (${p})`;
-                else expr = `= (${p})::text`;
+            const is_jsonb_field = column.includes('->') || rule.kind === 'obj';
 
-                if (rule.kind === 'list') {    
-                    return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) AS item WHERE item ${expr})`;
+            // Special case: 'contains' operator
+            if (rule.op === 'contains') {
+                if (is_jsonb_field) {
+                    if (rule.case_i) {
+                        if (rule.kind === 'list')
+                            return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) AS item WHERE item ILIKE (${p}))`;
+                        else
+                            return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_each_text(${column}) AS kv(key, value) WHERE key ILIKE (${p}))`;
+                    }
+                    else {
+                        if (rule.kind === 'list')
+                            return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) AS item WHERE item = (${p})::text)`;
+                        else
+                            return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_each_text(${column}) AS kv(key, value) WHERE key = (${p})::text))`;
+                    }
                 }
-                else {
-                    return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM jsonb_each_text(${column}) AS kv(key, value) WHERE key ${expr})`;
+                else if (rule.kind === 'list') {
+                    if (rule.case_i)
+                        return `${rule.not ? 'NOT ' : ''} EXISTS (SELECT 1 FROM unnest(${column}) AS item WHERE item ILIKE (${p}))`;
+                    else
+                        return `${rule.not ? 'NOT ' : ''} ${p} = ANY(${column})`;
                 }
             }
 
