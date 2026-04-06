@@ -157,7 +157,7 @@ export class PostgresNQLRunner extends NQLRunner {
                 p = _param(queryValue);
             }
 
-            const is_jsonb_field = (column.includes('->') && rule.kind === 'primitive') || rule.kind === 'obj';
+            const is_jsonb_field = (column.includes('->') && rule.kind !== 'primitive') || rule.kind === 'obj';
 
             // Special case: 'contains' operator
             if (rule.op === 'contains') {
