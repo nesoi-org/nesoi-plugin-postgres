@@ -34,9 +34,22 @@ export class PostgresNQLRunner extends NQLRunner {
 
         const sql_params: any[] = [];
 
-        const _param = (value: number | string | boolean) => {
+        // Due to a weird bug with PostgreSQL/PostgresJS, some parameters
+        // cannot be merged. This happens inside queries of jsonb fields, where the
+        // parameter is cast to a text, and for some reason it breaks other
+        // comparisons where the value is not supposed to be a text.
+        // Apparently, something on the chain makes ::text convert the parameter permanently.
+        // This list keeps track of parameters which were used on such queries,
+        // to avoid merging them with new values;
+        const unique_sql_params: any[] = [];
+
+        const _param = (value: number | string | boolean, avoid_merge = false) => {
+            const u = unique_sql_params.findIndex(v => v === value);
+            if (u >= 0) avoid_merge = true;
+            else if (avoid_merge) unique_sql_params.push(value);
+
             const i = sql_params.findIndex(v => v === value);
-            if (i < 0) {
+            if (avoid_merge || i < 0) {
                 sql_params.push(value);
                 return `$${sql_params.length}`;
             }
@@ -147,17 +160,17 @@ export class PostgresNQLRunner extends NQLRunner {
                 queryValue = `%${queryValue}%`;
             }
 
+            const is_jsonb_field = (column.includes('->') && rule.kind !== 'primitive') || rule.kind === 'obj';
+
             let p;
             if (Array.isArray(queryValue)) {
                 if (queryValue.length === 0) return rule.not ? 'TRUE' : 'FALSE';
 
-                p = queryValue.map(v => _param(v)).join(',');
+                p = queryValue.map(v => _param(v, is_jsonb_field)).join(',');
             }
             else {
-                p = _param(queryValue);
+                p = _param(queryValue, is_jsonb_field);
             }
-
-            const is_jsonb_field = (column.includes('->') && rule.kind !== 'primitive') || rule.kind === 'obj';
 
             // Special case: 'contains' operator
             if (rule.op === 'contains') {
