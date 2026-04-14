@@ -1,4 +1,4 @@
-import { $Bucket } from 'nesoi/lib/elements';
+import { $Bucket, $Module } from 'nesoi/lib/elements';
 import { BucketAdapter } from 'nesoi/lib/elements/entities/bucket/adapters/bucket_adapter';
 import { Log } from 'nesoi/lib/engine/util/log';
 import { AnyTrxNode, TrxNode } from 'nesoi/lib/engine/transaction/trx_node';
@@ -9,6 +9,7 @@ import { PostgresService } from './postgres.service';
 import { NesoiDatetime } from 'nesoi/lib/engine/data/datetime';
 import { BucketCacheSync } from 'nesoi/lib/elements/entities/bucket/cache/bucket_cache';
 import { BucketModel } from 'nesoi/lib/elements/entities/bucket/model/bucket_model';
+import { Daemon } from 'nesoi/lib/engine/daemon';
 
 export class PostgresBucketAdapter<
     $ extends $Bucket,
@@ -451,8 +452,17 @@ export class PostgresBucketAdapter<
         const schema = meta.schema as $Bucket;
         const trxModule = TrxNode.getModule(trx);
         const bucketName = schema.name;
-        const refName = (trxModule.name === schema.module ? '' : `${schema.module}::`) + bucketName;
-        const bucket = trxModule.buckets[refName];
+
+        // External Bucket
+        if (trxModule.name !== schema.module) {
+            const refName = `${schema.module}::${bucketName}`;
+            if (!(refName in (trxModule.schema as $Module).externals.buckets)) {
+                throw new Error(`The module ${trxModule.name} doesn't declare the bucket ${refName} as an external. Subquery not allowed.`);
+            }
+        }
+        
+        const tableModule = Daemon.getModule(trxModule.daemon!, schema.module);
+        const bucket = tableModule.buckets[bucketName];
         const adapter = bucket.adapter as PostgresBucketAdapter<any, any>;
         
         return {
